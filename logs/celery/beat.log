@@ -1,0 +1,27 @@
+celery beat v5.3.4 (emerald-rush) is starting.
+__    -    ... __   -        _
+LocalTime -> 2026-06-22 03:22:50
+Configuration ->
+    . broker -> redis://localhost:6379/0
+    . loader -> celery.loaders.app.AppLoader
+    . scheduler -> celery.beat.PersistentScheduler
+    . db -> celerybeat-schedule
+    . logfile -> [stderr]@%INFO
+    . maxinterval -> 5.00 minutes (300s)
+[2026-06-22 03:22:50,289: INFO/MainProcess] beat: Starting...
+[2026-06-22 03:25:02,047: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 03:30:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 03:35:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 03:40:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 03:45:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 03:50:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 03:55:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 04:00:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 04:05:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 04:10:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 04:15:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 04:20:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 04:25:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 04:30:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 04:35:00,000: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)
+[2026-06-22 04:40:00,001: INFO/MainProcess] Scheduler: Sending due task process-emails-every-5-minutes (rfq.tasks.monitor_emails_for_rfqs)

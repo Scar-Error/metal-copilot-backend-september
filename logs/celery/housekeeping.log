@@ -1,0 +1,28 @@
+ 
+ -------------- celery@DESKTOP-K4UP5PD v5.3.4 (emerald-rush)
+--- ***** ----- 
+-- ******* ---- Windows-11-10.0.26200-SP0 2026-06-22 03:22:50
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         rfq_system:0x1f02232dfd0
+- ** ---------- .> transport:   redis://localhost:6379/0
+- ** ---------- .> results:     redis://localhost:6379/0
+- *** --- * --- .> concurrency: 8 (solo)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> housekeeping     exchange=housekeeping(direct) key=housekeeping
+                
+
+[tasks]
+  . rfq.tasks.cleanup_old_attachments
+  . rfq.tasks.dispatch_to_supplier
+  . rfq.tasks.monitor_emails_for_rfqs
+  . rfq.tasks.process_rfq_with_ai
+  . rfq.tasks.process_user_emails
+  . rfq.tasks.sync_with_business_central
+
+[2026-06-22 03:22:52,421: INFO/MainProcess] Connected to redis://localhost:6379/0
+[2026-06-22 03:22:56,477: INFO/MainProcess] mingle: searching for neighbors
+[2026-06-22 03:23:03,590: INFO/MainProcess] mingle: all alone
+[2026-06-22 03:23:11,734: INFO/MainProcess] celery@DESKTOP-K4UP5PD ready.

@@ -1,0 +1,31 @@
+
+                REQUEST FOR QUOTATION
+                
+                Company: ACME Corporation
+                RFQ Number: RFQ-2024-001
+                Date: 2024-06-19
+                
+                Items:
+                1. Hydraulic Pump - Model HP-1000
+                   Quantity: 10 units
+                   Unit Price: $2,500
+                   Total: $25,000
+                
+                2. Control Valve - Model CV-500
+                   Quantity: 25 units
+                   Unit Price: $800
+                   Total: $20,000
+                
+                3. Pressure Sensor - Model PS-200
+                   Quantity: 50 units
+                   Unit Price: $150
+                   Total: $7,500
+                
+                Total Budget: $52,500
+                Required Delivery: 2024-12-31
+                
+                Specifications:
+                - Hydraulic Pump: 1000 PSI rating, stainless steel
+                - Control Valve: 2-inch diameter, pneumatic
+                - Pressure Sensor: 0-1000 PSI range, 4-20mA output
+                

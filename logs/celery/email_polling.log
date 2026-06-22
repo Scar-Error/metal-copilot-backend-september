@@ -1,0 +1,585 @@
+ 
+ -------------- celery@DESKTOP-K4UP5PD v5.3.4 (emerald-rush)
+--- ***** ----- 
+-- ******* ---- Windows-11-10.0.26200-SP0 2026-06-22 03:22:50
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         rfq_system:0x11134a7dfd0
+- ** ---------- .> transport:   redis://localhost:6379/0
+- ** ---------- .> results:     redis://localhost:6379/0
+- *** --- * --- .> concurrency: 8 (solo)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> email_polling    exchange=email_polling(direct) key=email_polling
+                
+
+[tasks]
+  . rfq.tasks.cleanup_old_attachments
+  . rfq.tasks.dispatch_to_supplier
+  . rfq.tasks.monitor_emails_for_rfqs
+  . rfq.tasks.process_rfq_with_ai
+  . rfq.tasks.process_user_emails
+  . rfq.tasks.sync_with_business_central
+
+[2026-06-22 03:22:52,420: INFO/MainProcess] Connected to redis://localhost:6379/0
+[2026-06-22 03:22:56,477: INFO/MainProcess] mingle: searching for neighbors
+[2026-06-22 03:23:03,591: INFO/MainProcess] mingle: all alone
+[2026-06-22 03:23:11,734: INFO/MainProcess] celery@DESKTOP-K4UP5PD ready.
+[2026-06-22 03:25:06,114: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[fb4a519f-b170-47f7-abf8-130b868286fc] received
+[2026-06-22 03:25:06,115: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 03:25:08,194: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 03:25:10,250: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[fb4a519f-b170-47f7-abf8-130b868286fc] succeeded in 4.134841899998719s: 1
+[2026-06-22 03:25:10,251: INFO/MainProcess] Task rfq.tasks.process_user_emails[7f423678-8bdb-4ffd-809f-83e1cc9983a7] received
+[2026-06-22 03:25:20,567: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:25:20,606: INFO/MainProcess] Created Order RFQ-20260622-F2666FB0 from email
+[2026-06-22 03:25:23,126: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:25:23,150: INFO/MainProcess] Updated Order RFQ-20260622-F2666FB0 with AI data (confidence=0.85)
+[2026-06-22 03:25:27,161: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:25:27,937: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:25:29,382: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:25:31,801: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:25:34,677: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:25:36,847: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:25:36,849: INFO/MainProcess] Processed 1 emails (0 errors)
+[2026-06-22 03:25:36,849: INFO/MainProcess] Processed 1 RFQ emails for user admin
+[2026-06-22 03:25:36,851: INFO/MainProcess] Task rfq.tasks.process_user_emails[7f423678-8bdb-4ffd-809f-83e1cc9983a7] succeeded in 26.599444100000255s: 1
+[2026-06-22 03:30:00,002: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[e33f5c64-d9ad-479c-b333-a228b217c22f] received
+[2026-06-22 03:30:00,003: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 03:30:00,007: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 03:30:00,009: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[e33f5c64-d9ad-479c-b333-a228b217c22f] succeeded in 0.005960200000117766s: 1
+[2026-06-22 03:30:00,010: INFO/MainProcess] Task rfq.tasks.process_user_emails[451431cd-c517-45a4-99ec-7e3bd5f537cf] received
+[2026-06-22 03:30:09,537: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:30:11,153: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:30:12,711: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:30:14,169: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:30:15,068: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:30:16,463: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:30:18,500: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:30:18,501: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 03:30:18,501: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 03:30:18,503: INFO/MainProcess] Task rfq.tasks.process_user_emails[451431cd-c517-45a4-99ec-7e3bd5f537cf] succeeded in 18.492106499998044s: 0
+[2026-06-22 03:35:00,004: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[d5eb444e-93e5-4cc1-b8f7-c6f1b3a8a748] received
+[2026-06-22 03:35:00,005: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 03:35:00,010: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 03:35:00,012: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[d5eb444e-93e5-4cc1-b8f7-c6f1b3a8a748] succeeded in 0.00703119999889168s: 1
+[2026-06-22 03:35:00,014: INFO/MainProcess] Task rfq.tasks.process_user_emails[b52f22fb-2cea-4064-97c1-a8b0ea206bfd] received
+[2026-06-22 03:35:07,831: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:35:08,750: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:35:10,901: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:35:12,542: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:35:13,563: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:35:14,433: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:35:16,021: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:35:16,024: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 03:35:16,024: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 03:35:16,026: INFO/MainProcess] Task rfq.tasks.process_user_emails[b52f22fb-2cea-4064-97c1-a8b0ea206bfd] succeeded in 16.011949100000493s: 0
+[2026-06-22 03:40:00,003: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[1753bfa4-f62c-4e18-9128-2d3c1609b915] received
+[2026-06-22 03:40:00,004: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 03:40:00,011: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 03:40:00,016: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[1753bfa4-f62c-4e18-9128-2d3c1609b915] succeeded in 0.011709900001733331s: 1
+[2026-06-22 03:40:00,019: INFO/MainProcess] Task rfq.tasks.process_user_emails[c82170b9-68e6-418f-a179-668548f2efb9] received
+[2026-06-22 03:40:10,502: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:40:11,735: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:40:12,573: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:40:13,220: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:40:15,217: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:40:16,462: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:40:18,444: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:40:18,445: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 03:40:18,445: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 03:40:18,446: INFO/MainProcess] Task rfq.tasks.process_user_emails[c82170b9-68e6-418f-a179-668548f2efb9] succeeded in 18.426934700000857s: 0
+[2026-06-22 03:45:00,002: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[aa8a6688-235d-476b-9e92-cccdcae5b7bd] received
+[2026-06-22 03:45:00,002: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 03:45:00,008: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 03:45:00,009: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[aa8a6688-235d-476b-9e92-cccdcae5b7bd] succeeded in 0.006869699998787837s: 1
+[2026-06-22 03:45:00,013: INFO/MainProcess] Task rfq.tasks.process_user_emails[e86a7bb2-db82-4356-adb2-cbc0c3b31add] received
+[2026-06-22 03:45:07,875: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:07,913: INFO/MainProcess] Created Order RFQ-20260622-683A7C91 from email
+[2026-06-22 03:45:10,664: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:10,681: INFO/MainProcess] Updated Order RFQ-20260622-683A7C91 with AI data (confidence=0.85)
+[2026-06-22 03:45:14,832: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:16,495: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:17,781: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:17,811: INFO/MainProcess] Created Order RFQ-20260622-AB0D75CA from email
+[2026-06-22 03:45:19,246: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:19,259: ERROR/MainProcess] Error processing email AQMkADAwATNiZmYAZS1iM2JjLWM5ZTAtMDACLTAwCgBGAAAD_i1JQxISAEFLjgWMNQACywAHAIqCzWD2ALhJnBVasqRzLtcAAAIBDAAAAIqCzWD2ALhJnBVasqRzLtcAAAACWV21AAAA
+Traceback (most recent call last):
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 89, in _execute
+    return self.cursor.execute(sql, params)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\sqlite3\base.py", line 328, in execute
+    return super().execute(query, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+sqlite3.IntegrityError: NOT NULL constraint failed: rfq_rfqitem.item_code
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\orchestrator.py", line 200, in poll_new_emails
+    order = self._process_one_email(email, classification)
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\orchestrator.py", line 247, in _process_one_email
+    handler(email, order)
+    ~~~~~~~^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\orchestrator.py", line 282, in _handle_rfq_po
+    self._rfq_builder.update_from_extraction(order, extracted)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\rfq_builder.py", line 103, in update_from_extraction
+    self._create_items(order, data.get('items', []))
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\rfq_builder.py", line 113, in _create_items
+    OrderItem.objects.create(
+    ~~~~~~~~~~~~~~~~~~~~~~~~^
+        order=order,
+        ^^^^^^^^^^^^
+    ...<7 lines>...
+        extraction_confidence=item_data.get('confidence_score'),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\manager.py", line 87, in manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\query.py", line 658, in create
+    obj.save(force_insert=True, using=self.db)
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 814, in save
+    self.save_base(
+    ~~~~~~~~~~~~~~^
+        using=using,
+        ^^^^^^^^^^^^
+    ...<2 lines>...
+        update_fields=update_fields,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 877, in save_base
+    updated = self._save_table(
+        raw,
+    ...<4 lines>...
+        update_fields,
+    )
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 1020, in _save_table
+    results = self._do_insert(
+        cls._base_manager, using, fields, returning_fields, raw
+    )
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 1061, in _do_insert
+    return manager._insert(
+           ~~~~~~~~~~~~~~~^
+        [self],
+        ^^^^^^^
+    ...<3 lines>...
+        raw=raw,
+        ^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\manager.py", line 87, in manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\query.py", line 1805, in _insert
+    return query.get_compiler(using=using).execute_sql(returning_fields)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\sql\compiler.py", line 1822, in execute_sql
+    cursor.execute(sql, params)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 102, in execute
+    return super().execute(sql, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 67, in execute
+    return self._execute_with_wrappers(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        sql, params, many=False, executor=self._execute
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 80, in _execute_with_wrappers
+    return executor(sql, params, many, context)
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 84, in _execute
+    with self.db.wrap_database_errors:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\utils.py", line 91, in __exit__
+    raise dj_exc_value.with_traceback(traceback) from exc_value
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 89, in _execute
+    return self.cursor.execute(sql, params)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\sqlite3\base.py", line 328, in execute
+    return super().execute(query, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+django.db.utils.IntegrityError: NOT NULL constraint failed: rfq_rfqitem.item_code
+[2026-06-22 03:45:20,763: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:20,787: INFO/MainProcess] Created Order RFQ-20260622-37BB6B7F from email
+[2026-06-22 03:45:22,574: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:22,603: ERROR/MainProcess] Error processing email AQMkADAwATNiZmYAZS1iM2JjLWM5ZTAtMDACLTAwCgBGAAAD_i1JQxISAEFLjgWMNQACywAHAIqCzWD2ALhJnBVasqRzLtcAAAIBDAAAAIqCzWD2ALhJnBVasqRzLtcAAAACWV20AAAA
+Traceback (most recent call last):
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 89, in _execute
+    return self.cursor.execute(sql, params)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\sqlite3\base.py", line 328, in execute
+    return super().execute(query, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+sqlite3.IntegrityError: NOT NULL constraint failed: rfq_rfqitem.item_code
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\orchestrator.py", line 200, in poll_new_emails
+    order = self._process_one_email(email, classification)
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\orchestrator.py", line 247, in _process_one_email
+    handler(email, order)
+    ~~~~~~~^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\orchestrator.py", line 282, in _handle_rfq_po
+    self._rfq_builder.update_from_extraction(order, extracted)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\rfq_builder.py", line 103, in update_from_extraction
+    self._create_items(order, data.get('items', []))
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\rfq_builder.py", line 113, in _create_items
+    OrderItem.objects.create(
+    ~~~~~~~~~~~~~~~~~~~~~~~~^
+        order=order,
+        ^^^^^^^^^^^^
+    ...<7 lines>...
+        extraction_confidence=item_data.get('confidence_score'),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\manager.py", line 87, in manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\query.py", line 658, in create
+    obj.save(force_insert=True, using=self.db)
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 814, in save
+    self.save_base(
+    ~~~~~~~~~~~~~~^
+        using=using,
+        ^^^^^^^^^^^^
+    ...<2 lines>...
+        update_fields=update_fields,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 877, in save_base
+    updated = self._save_table(
+        raw,
+    ...<4 lines>...
+        update_fields,
+    )
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 1020, in _save_table
+    results = self._do_insert(
+        cls._base_manager, using, fields, returning_fields, raw
+    )
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 1061, in _do_insert
+    return manager._insert(
+           ~~~~~~~~~~~~~~~^
+        [self],
+        ^^^^^^^
+    ...<3 lines>...
+        raw=raw,
+        ^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\manager.py", line 87, in manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\query.py", line 1805, in _insert
+    return query.get_compiler(using=using).execute_sql(returning_fields)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\sql\compiler.py", line 1822, in execute_sql
+    cursor.execute(sql, params)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 102, in execute
+    return super().execute(sql, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 67, in execute
+    return self._execute_with_wrappers(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        sql, params, many=False, executor=self._execute
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 80, in _execute_with_wrappers
+    return executor(sql, params, many, context)
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 84, in _execute
+    with self.db.wrap_database_errors:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\utils.py", line 91, in __exit__
+    raise dj_exc_value.with_traceback(traceback) from exc_value
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\utils.py", line 89, in _execute
+    return self.cursor.execute(sql, params)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\backends\sqlite3\base.py", line 328, in execute
+    return super().execute(query, params)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+django.db.utils.IntegrityError: NOT NULL constraint failed: rfq_rfqitem.item_code
+[2026-06-22 03:45:23,539: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:25,732: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:25,760: INFO/MainProcess] Created Order RFQ-20260622-C9BE0929 from email
+[2026-06-22 03:45:28,185: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:45:28,194: ERROR/MainProcess] Error processing email AQMkADAwATNiZmYAZS1iM2JjLWM5ZTAtMDACLTAwCgBGAAAD_i1JQxISAEFLjgWMNQACywAHAIqCzWD2ALhJnBVasqRzLtcAAAIBDAAAAIqCzWD2ALhJnBVasqRzLtcAAAACWV2yAAAA
+Traceback (most recent call last):
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\fields\__init__.py", line 2053, in get_prep_value
+    return int(value)
+ValueError: invalid literal for int() with base 10: 'Quantity'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\orchestrator.py", line 200, in poll_new_emails
+    order = self._process_one_email(email, classification)
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\orchestrator.py", line 247, in _process_one_email
+    handler(email, order)
+    ~~~~~~~^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\orchestrator.py", line 282, in _handle_rfq_po
+    self._rfq_builder.update_from_extraction(order, extracted)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\rfq_builder.py", line 103, in update_from_extraction
+    self._create_items(order, data.get('items', []))
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\backend\rfq\rfq_builder.py", line 113, in _create_items
+    OrderItem.objects.create(
+    ~~~~~~~~~~~~~~~~~~~~~~~~^
+        order=order,
+        ^^^^^^^^^^^^
+    ...<7 lines>...
+        extraction_confidence=item_data.get('confidence_score'),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\manager.py", line 87, in manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\query.py", line 658, in create
+    obj.save(force_insert=True, using=self.db)
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 814, in save
+    self.save_base(
+    ~~~~~~~~~~~~~~^
+        using=using,
+        ^^^^^^^^^^^^
+    ...<2 lines>...
+        update_fields=update_fields,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 877, in save_base
+    updated = self._save_table(
+        raw,
+    ...<4 lines>...
+        update_fields,
+    )
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 1020, in _save_table
+    results = self._do_insert(
+        cls._base_manager, using, fields, returning_fields, raw
+    )
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\base.py", line 1061, in _do_insert
+    return manager._insert(
+           ~~~~~~~~~~~~~~~^
+        [self],
+        ^^^^^^^
+    ...<3 lines>...
+        raw=raw,
+        ^^^^^^^^
+    )
+    ^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\manager.py", line 87, in manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\query.py", line 1805, in _insert
+    return query.get_compiler(using=using).execute_sql(returning_fields)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\sql\compiler.py", line 1821, in execute_sql
+    for sql, params in self.as_sql():
+                       ~~~~~~~~~~~^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\sql\compiler.py", line 1747, in as_sql
+    self.prepare_value(field, self.pre_save_val(field, obj))
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\sql\compiler.py", line 1686, in prepare_value
+    return field.get_db_prep_save(value, connection=self.connection)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\fields\__init__.py", line 954, in get_db_prep_save
+    return self.get_db_prep_value(value, connection=connection, prepared=False)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\fields\__init__.py", line 2060, in get_db_prep_value
+    value = super().get_db_prep_value(value, connection, prepared)
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\fields\__init__.py", line 947, in get_db_prep_value
+    value = self.get_prep_value(value)
+  File "D:\Scarerror\SEs\SE07\code\dev\venv\Lib\site-packages\django\db\models\fields\__init__.py", line 2055, in get_prep_value
+    raise e.__class__(
+        "Field '%s' expected a number but got %r." % (self.name, value),
+    ) from e
+ValueError: Field 'quantity' expected a number but got 'Quantity'.
+[2026-06-22 03:45:28,198: INFO/MainProcess] Processed 1 emails (3 errors)
+[2026-06-22 03:45:28,198: INFO/MainProcess] Processed 1 RFQ emails for user admin
+[2026-06-22 03:45:28,198: ERROR/MainProcess]   - NOT NULL constraint failed: rfq_rfqitem.item_code
+[2026-06-22 03:45:28,199: ERROR/MainProcess]   - NOT NULL constraint failed: rfq_rfqitem.item_code
+[2026-06-22 03:45:28,199: ERROR/MainProcess]   - Field 'quantity' expected a number but got 'Quantity'.
+[2026-06-22 03:45:28,199: INFO/MainProcess] Task rfq.tasks.process_user_emails[e86a7bb2-db82-4356-adb2-cbc0c3b31add] succeeded in 28.18624130000171s: 1
+[2026-06-22 03:50:00,002: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[f5f9a5c1-520f-4266-acb0-08a56e973cbe] received
+[2026-06-22 03:50:00,002: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 03:50:00,009: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 03:50:00,010: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[f5f9a5c1-520f-4266-acb0-08a56e973cbe] succeeded in 0.007646699999895645s: 1
+[2026-06-22 03:50:00,012: INFO/MainProcess] Task rfq.tasks.process_user_emails[1d8b38a1-bf16-4cba-9247-ea8e4bbdaa81] received
+[2026-06-22 03:50:07,294: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:50:09,506: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:50:10,621: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:50:11,954: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:50:12,715: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:50:13,923: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:50:14,584: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:50:14,590: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 03:50:14,590: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 03:50:14,592: INFO/MainProcess] Task rfq.tasks.process_user_emails[1d8b38a1-bf16-4cba-9247-ea8e4bbdaa81] succeeded in 14.579678199999762s: 0
+[2026-06-22 03:55:00,003: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[a63db3ef-19b4-4541-ac9a-8bedd3379622] received
+[2026-06-22 03:55:00,003: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 03:55:00,008: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 03:55:00,009: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[a63db3ef-19b4-4541-ac9a-8bedd3379622] succeeded in 0.005943500000284985s: 1
+[2026-06-22 03:55:00,011: INFO/MainProcess] Task rfq.tasks.process_user_emails[91d75f85-e080-4e5f-91a5-56317dcd5642] received
+[2026-06-22 03:55:09,933: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:55:10,951: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:55:12,641: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:55:13,777: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:55:15,362: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:55:16,184: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:55:17,021: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 03:55:17,023: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 03:55:17,023: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 03:55:17,026: INFO/MainProcess] Task rfq.tasks.process_user_emails[91d75f85-e080-4e5f-91a5-56317dcd5642] succeeded in 17.015386899998703s: 0
+[2026-06-22 04:00:00,002: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[5cd54ebe-7c44-4333-992c-ca6f3de24987] received
+[2026-06-22 04:00:00,003: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 04:00:00,008: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 04:00:00,009: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[5cd54ebe-7c44-4333-992c-ca6f3de24987] succeeded in 0.006418500001018401s: 1
+[2026-06-22 04:00:00,011: INFO/MainProcess] Task rfq.tasks.process_user_emails[edbe05c4-216b-4682-8701-7cad3e7302c0] received
+[2026-06-22 04:00:08,849: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:00:10,688: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:00:11,794: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:00:13,899: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:00:14,821: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:00:16,875: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:00:18,492: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:00:18,497: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 04:00:18,497: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 04:00:18,498: INFO/MainProcess] Task rfq.tasks.process_user_emails[edbe05c4-216b-4682-8701-7cad3e7302c0] succeeded in 18.487129200002528s: 0
+[2026-06-22 04:05:00,002: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[19064a64-e78d-403a-8054-d725072dafeb] received
+[2026-06-22 04:05:00,003: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 04:05:00,006: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 04:05:00,008: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[19064a64-e78d-403a-8054-d725072dafeb] succeeded in 0.005404100000305334s: 1
+[2026-06-22 04:05:00,011: INFO/MainProcess] Task rfq.tasks.process_user_emails[cdd616ea-b9a1-40f1-b357-3014ad5b4ddb] received
+[2026-06-22 04:05:09,648: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:05:12,125: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:05:14,001: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:05:15,182: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:05:16,031: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:05:16,953: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:05:20,505: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:05:20,507: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 04:05:20,507: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 04:05:20,510: INFO/MainProcess] Task rfq.tasks.process_user_emails[cdd616ea-b9a1-40f1-b357-3014ad5b4ddb] succeeded in 20.49919310000041s: 0
+[2026-06-22 04:10:00,002: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[5173dede-1dc8-4abb-ac77-7ac091a28ca5] received
+[2026-06-22 04:10:00,002: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 04:10:00,004: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 04:10:00,005: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[5173dede-1dc8-4abb-ac77-7ac091a28ca5] succeeded in 0.0031199999975797255s: 1
+[2026-06-22 04:10:00,006: INFO/MainProcess] Task rfq.tasks.process_user_emails[64af74a0-dfa0-4729-8e52-4e346faf0469] received
+[2026-06-22 04:10:08,553: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:10:09,231: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:10:10,586: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:10:12,022: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:10:12,980: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:10:13,868: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:10:15,212: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:10:15,214: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 04:10:15,214: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 04:10:15,217: INFO/MainProcess] Task rfq.tasks.process_user_emails[64af74a0-dfa0-4729-8e52-4e346faf0469] succeeded in 15.210988900002121s: 0
+[2026-06-22 04:15:00,003: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[0e3d1525-8ea3-4045-97fd-04573cdaf454] received
+[2026-06-22 04:15:00,003: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 04:15:00,007: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 04:15:00,007: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[0e3d1525-8ea3-4045-97fd-04573cdaf454] succeeded in 0.004616800000803778s: 1
+[2026-06-22 04:15:00,009: INFO/MainProcess] Task rfq.tasks.process_user_emails[9b26c726-5eb7-4ee5-8e06-87e2db374c36] received
+[2026-06-22 04:15:09,343: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:15:11,217: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:15:12,314: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:15:13,828: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:15:14,998: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:15:16,556: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:15:17,579: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:15:17,581: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 04:15:17,582: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 04:15:17,584: INFO/MainProcess] Task rfq.tasks.process_user_emails[9b26c726-5eb7-4ee5-8e06-87e2db374c36] succeeded in 17.574475400000665s: 0
+[2026-06-22 04:20:00,003: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[ba3b5a65-6ee9-4d90-a1d9-a9e3388c06fa] received
+[2026-06-22 04:20:00,004: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 04:20:00,011: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 04:20:00,012: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[ba3b5a65-6ee9-4d90-a1d9-a9e3388c06fa] succeeded in 0.008894300000974908s: 1
+[2026-06-22 04:20:00,015: INFO/MainProcess] Task rfq.tasks.process_user_emails[2e44b072-7aba-4738-8c45-de70707ed2af] received
+[2026-06-22 04:20:08,303: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:20:09,036: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:20:11,057: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:20:11,743: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:20:13,259: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:20:14,373: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:20:15,223: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:20:15,230: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 04:20:15,231: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 04:20:15,232: INFO/MainProcess] Task rfq.tasks.process_user_emails[2e44b072-7aba-4738-8c45-de70707ed2af] succeeded in 15.21637489999921s: 0
+[2026-06-22 04:25:00,002: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[ae2762bf-6e38-4285-883a-03abe9e9f685] received
+[2026-06-22 04:25:00,002: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 04:25:00,005: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 04:25:00,006: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[ae2762bf-6e38-4285-883a-03abe9e9f685] succeeded in 0.0036571999989973847s: 1
+[2026-06-22 04:25:00,007: INFO/MainProcess] Task rfq.tasks.process_user_emails[e5ecef2c-4390-4fec-b190-d660c355619f] received
+[2026-06-22 04:25:07,078: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:25:07,102: INFO/MainProcess] Created Order RFQ-20260622-47127A60 from email
+[2026-06-22 04:25:09,518: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:25:09,537: INFO/MainProcess] Updated Order RFQ-20260622-47127A60 with AI data (confidence=0.85)
+[2026-06-22 04:25:11,797: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:25:13,226: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:25:14,072: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:25:14,922: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:25:16,335: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:25:18,401: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:25:18,407: INFO/MainProcess] Processed 1 emails (0 errors)
+[2026-06-22 04:25:18,407: INFO/MainProcess] Processed 1 RFQ emails for user admin
+[2026-06-22 04:25:18,407: INFO/MainProcess] Task rfq.tasks.process_user_emails[e5ecef2c-4390-4fec-b190-d660c355619f] succeeded in 18.399875400002202s: 1
+[2026-06-22 04:30:00,002: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[536ad8fe-737a-4311-bc2a-f251e17342be] received
+[2026-06-22 04:30:00,002: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 04:30:00,005: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 04:30:00,006: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[536ad8fe-737a-4311-bc2a-f251e17342be] succeeded in 0.0035874999994121026s: 1
+[2026-06-22 04:30:00,007: INFO/MainProcess] Task rfq.tasks.process_user_emails[59aec84f-5bac-4adc-951a-2461501377a7] received
+[2026-06-22 04:30:09,620: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:30:11,700: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:30:13,281: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:30:14,851: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:30:17,171: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:30:18,906: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:30:22,190: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:30:22,191: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 04:30:22,191: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 04:30:22,193: INFO/MainProcess] Task rfq.tasks.process_user_emails[59aec84f-5bac-4adc-951a-2461501377a7] succeeded in 22.186327999999776s: 0
+[2026-06-22 04:35:00,002: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[30944e4e-baef-4061-afbd-549e9e76c057] received
+[2026-06-22 04:35:00,003: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 04:35:00,007: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 04:35:00,009: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[30944e4e-baef-4061-afbd-549e9e76c057] succeeded in 0.005686000000423519s: 1
+[2026-06-22 04:35:00,011: INFO/MainProcess] Task rfq.tasks.process_user_emails[283c24f5-37ed-4a78-94fe-627afd47c2a6] received
+[2026-06-22 04:35:08,036: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:35:08,927: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:35:09,703: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:35:10,667: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:35:11,624: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:35:12,286: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:35:13,255: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:35:13,256: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 04:35:13,256: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 04:35:13,258: INFO/MainProcess] Task rfq.tasks.process_user_emails[283c24f5-37ed-4a78-94fe-627afd47c2a6] succeeded in 13.247137199999997s: 0
+[2026-06-22 04:40:00,004: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[50f9c955-e2bf-4962-8af5-86872b0a5524] received
+[2026-06-22 04:40:00,005: INFO/MainProcess] Starting email monitoring for RFQs
+[2026-06-22 04:40:00,008: INFO/MainProcess] Fanned out 1 per-user tasks
+[2026-06-22 04:40:00,009: INFO/MainProcess] Task rfq.tasks.monitor_emails_for_rfqs[50f9c955-e2bf-4962-8af5-86872b0a5524] succeeded in 0.003916300000128103s: 1
+[2026-06-22 04:40:00,010: INFO/MainProcess] Task rfq.tasks.process_user_emails[cceedfb6-ca58-4419-b6bb-9a841a9e7a17] received
+[2026-06-22 04:40:08,826: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:40:09,592: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:40:11,249: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:40:11,979: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:40:14,321: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:40:15,842: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:40:17,119: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-06-22 04:40:17,120: INFO/MainProcess] Processed 0 emails (0 errors)
+[2026-06-22 04:40:17,120: INFO/MainProcess] Processed 0 RFQ emails for user admin
+[2026-06-22 04:40:17,121: INFO/MainProcess] Task rfq.tasks.process_user_emails[cceedfb6-ca58-4419-b6bb-9a841a9e7a17] succeeded in 17.111138199998095s: 0

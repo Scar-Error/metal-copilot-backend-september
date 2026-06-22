@@ -1,0 +1,29 @@
+# Environment variables (contain secrets - NEVER commit)
+.env
+
+# Python
+__pycache__/
+.pytest_cache
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Django
+*.sqlite3
+media/
+static/
