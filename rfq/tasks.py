@@ -159,15 +159,19 @@ def process_rfq_with_ai(order_id):
     max_retries=3,
     default_retry_delay=60,
 )
-def dispatch_to_supplier(order_id):
+def dispatch_to_supplier(order_id, supplier_id=None):
     """
     Dispatch the order to its supplier via email.
     If no supplier is configured, the order stays at 'inquiry' stage
-    and a follow-up will be triggered when a supplier is assigned.
+    and a notification is created to add a supplier.
+    
+    Args:
+        order_id: The ID of the order to dispatch
+        supplier_id: Optional specific supplier ID to dispatch to (for manual selection)
     """
     logger.info('Starting supplier dispatch for order %d', order_id)
 
-    from rfq.models import Order
+    from rfq.models import Order, OrderSupplierAssignment
 
     try:
         order = Order.objects.get(id=order_id)
@@ -175,15 +179,48 @@ def dispatch_to_supplier(order_id):
         logger.error('Order %d not found for dispatch', order_id)
         return False
 
-    recipient = order.supplier.email if order.supplier else order.supplier_email
-    if not recipient:
+    # If supplier_id is provided, use that specific supplier
+    if supplier_id:
+        try:
+            from contacts.models import Contact
+            supplier = Contact.objects.get(id=supplier_id, type='supplier')
+        except Contact.DoesNotExist:
+            logger.error('Supplier %d not found', supplier_id)
+            return False
+    else:
+        # Otherwise, use the primary supplier or check for assigned suppliers
+        supplier = order.supplier
+        if not supplier:
+            # Check if there are any suppliers assigned via the ManyToMany field
+            assigned_suppliers = order.suppliers.filter(type='supplier')
+            if assigned_suppliers.exists():
+                supplier = assigned_suppliers.first()
+                logger.info('Using first assigned supplier: %s', supplier.company_name)
+
+    if not supplier:
         logger.info(
-            'Order %d has no supplier attached, staying at inquiry stage',
+            'Order %d has no supplier attached, creating notification to add supplier',
             order_id,
         )
         order.stage = 'inquiry'
-        order.save(update_fields=['stage'])
+        order.notes = 'No supplier assigned. Please add a supplier to dispatch this RFQ.'
+        order.save(update_fields=['stage', 'notes'])
+        
+        # Create a task/notification for adding supplier
+        create_add_supplier_task(order)
         return False
+
+    # Check if this supplier has already been sent an email
+    existing_assignment = OrderSupplierAssignment.objects.filter(
+        order=order, supplier=supplier
+    ).first()
+    
+    if existing_assignment and existing_assignment.email_sent:
+        logger.info(
+            'Order %d already sent to supplier %s',
+            order_id, supplier.company_name
+        )
+        return True
 
     from rfq.email_service import SupplierEmailService
     from microsoft_auth.graph_api import GraphEmailProvider
@@ -220,17 +257,71 @@ def dispatch_to_supplier(order_id):
     result = email_service.send_rfq_to_supplier(order)
 
     if result['success']:
-        logger.info('Supplier dispatch complete for order %d', order_id)
+        logger.info('Supplier dispatch complete for order %d to supplier %s', order_id, supplier.company_name)
+        
+        # Update or create the supplier assignment record
+        assignment, created = OrderSupplierAssignment.objects.update_or_create(
+            order=order,
+            supplier=supplier,
+            defaults={
+                'email_sent': True,
+                'email_sent_at': timezone.now(),
+                'assigned_by': user,
+            }
+        )
+        
+        # Update the order's primary supplier if not set
+        if not order.supplier:
+            order.supplier = supplier
+            order.save(update_fields=['supplier'])
+        
         return True
 
     logger.error('Supplier dispatch failed for order %d: %s', order_id, result['message'])
+    
+    # Update assignment with error
+    if existing_assignment:
+        existing_assignment.email_error = result['message']
+        existing_assignment.save(update_fields=['email_error'])
+    else:
+        OrderSupplierAssignment.objects.create(
+            order=order,
+            supplier=supplier,
+            email_error=result['message'],
+            assigned_by=user,
+        )
+    
     return False
+
+
+def create_add_supplier_task(order):
+    """
+    Create a task/notification for adding a supplier to an order.
+    """
+    from tasks.models import Task
+    
+    task_title = f"Add supplier for RFQ {order.rfq_number}"
+    task_description = (
+        f"Order from {order.company_name} needs a supplier to be assigned. "
+        f"RFQ Number: {order.rfq_number}, "
+        f"Items: {order.items_description or 'Not specified'}"
+    )
+    
+    Task.objects.create(
+        title=task_title,
+        description=task_description,
+        status='pending',
+        order=order,
+    )
+    
+    logger.info('Created task to add supplier for order %d', order.id)
 
 
 @shared_task(
     autoretry_for=(Exception,),
     max_retries=2,
     default_retry_delay=120,
+    queue='email_polling',
 )
 def sync_with_business_central(order_id):
     logger.info('Starting BC sync for order %d', order_id)

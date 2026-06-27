@@ -53,12 +53,15 @@ class OrderSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(
         source='supplier.company_name', read_only=True, default=None,
     )
+    supplier_id = serializers.IntegerField(
+        source='supplier.id', read_only=True, default=None,
+    )
 
     class Meta:
         model = Order
         fields = [
             'id', 'type', 'stage', 'rfq_number', 'company_name',
-            'contact', 'contact_name', 'supplier', 'supplier_name',
+            'contact', 'contact_name', 'supplier', 'supplier_id', 'supplier_name',
             'supplier_email', 'status', 'priority', 'source',
             'email_subject', 'email_sender', 'email_received_at', 'email_body',
             'email_classification',

@@ -99,6 +99,28 @@ class OrderViewSet(viewsets.ModelViewSet):
     def dashboard_stats(self, request):
         return Response(dashboard_stats())
 
+    @action(detail=False, methods=['get'])
+    def available_suppliers(self, request):
+        """Get list of all suppliers for dropdown selection."""
+        from contacts.models import Contact
+        
+        suppliers = Contact.objects.filter(type='supplier').order_by('company_name')
+        
+        suppliers_data = []
+        for supplier in suppliers:
+            suppliers_data.append({
+                'id': supplier.id,
+                'company_name': supplier.company_name,
+                'email': supplier.email,
+                'contact_person': supplier.contact_person,
+                'phone': supplier.phone,
+            })
+        
+        return Response({
+            'count': len(suppliers_data),
+            'suppliers': suppliers_data,
+        })
+
     @action(detail=True, methods=['post'])
     def review(self, request, pk=None):
         order = self.get_object()
@@ -170,6 +192,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     def assign_supplier(self, request, pk=None):
         order = self.get_object()
         supplier_id = request.data.get('supplier_id')
+        auto_dispatch = request.data.get('auto_dispatch', False)
 
         if not supplier_id:
             return Response(
@@ -186,17 +209,99 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        order.supplier = supplier
-        order.supplier_email = supplier.email
-        order.save(update_fields=['supplier', 'supplier_email'])
+        # Add supplier to the ManyToMany field
+        order.suppliers.add(supplier)
+        
+        # Set as primary supplier if not already set
+        if not order.supplier:
+            order.supplier = supplier
+            order.supplier_email = supplier.email
+            order.save(update_fields=['supplier', 'supplier_email'])
 
-        from rfq.tasks import dispatch_to_supplier
-        dispatch_to_supplier.delay(order.id)
+        # Create supplier assignment record
+        from rfq.models import OrderSupplierAssignment
+        OrderSupplierAssignment.objects.get_or_create(
+            order=order,
+            supplier=supplier,
+            defaults={'assigned_by': request.user}
+        )
+
+        # Mark related tasks as completed
+        from tasks.models import Task
+        Task.objects.filter(order=order, status='pending').update(
+            status='completed',
+            completed_at=timezone.now()
+        )
+
+        # Auto-dispatch if requested
+        if auto_dispatch:
+            from rfq.tasks import dispatch_to_supplier
+            dispatch_to_supplier.delay(order.id, supplier_id)
 
         return Response({
             'success': True,
-            'message': f'Supplier {supplier.company_name} assigned and dispatch queued',
+            'message': f'Supplier {supplier.company_name} assigned',
             'order_id': order.id,
+            'supplier_id': supplier.id,
+            'auto_dispatched': auto_dispatch,
+        })
+
+    @action(detail=True, methods=['post'])
+    def dispatch_to_supplier(self, request, pk=None):
+        """Manually dispatch RFQ to a specific supplier."""
+        order = self.get_object()
+        supplier_id = request.data.get('supplier_id')
+
+        if not supplier_id:
+            return Response(
+                {'error': 'supplier_id is required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from contacts.models import Contact
+        try:
+            supplier = Contact.objects.get(id=supplier_id, type='supplier')
+        except Contact.DoesNotExist:
+            return Response(
+                {'error': 'Supplier not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        from rfq.tasks import dispatch_to_supplier
+        dispatch_to_supplier.delay(order.id, supplier_id)
+
+        return Response({
+            'success': True,
+            'message': f'Dispatch queued to supplier {supplier.company_name}',
+            'order_id': order.id,
+            'supplier_id': supplier.id,
+        })
+
+    @action(detail=True, methods=['get'])
+    def suppliers(self, request, pk=None):
+        """Get list of suppliers assigned to this order with their email status."""
+        order = self.get_object()
+        
+        from rfq.models import OrderSupplierAssignment
+        assignments = order.supplier_assignments.all()
+        
+        suppliers_data = []
+        for assignment in assignments:
+            suppliers_data.append({
+                'id': assignment.supplier.id,
+                'company_name': assignment.supplier.company_name,
+                'email': assignment.supplier.email,
+                'contact_person': assignment.supplier.contact_person,
+                'assigned_at': assignment.assigned_at,
+                'email_sent': assignment.email_sent,
+                'email_sent_at': assignment.email_sent_at,
+                'email_error': assignment.email_error,
+                'is_primary': order.supplier_id == assignment.supplier.id,
+            })
+        
+        return Response({
+            'order_id': order.id,
+            'suppliers': suppliers_data,
         })
 
     @action(detail=False, methods=['post'])

@@ -62,7 +62,14 @@ class Order(models.Model):
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name='supplied_orders',
-        help_text='Supplier assigned to fulfill this order',
+        help_text='Primary supplier assigned to fulfill this order (legacy field)',
+    )
+    suppliers = models.ManyToManyField(
+        'contacts.Contact',
+        blank=True,
+        related_name='rfq_suppliers',
+        through='OrderSupplierAssignment',
+        help_text='Multiple suppliers that can fulfill this order',
     )
 
     # Email source information
@@ -134,6 +141,25 @@ class Order(models.Model):
 
     def __str__(self):
         return f"{self.rfq_number} - {self.company_name}"
+
+
+class OrderSupplierAssignment(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='supplier_assignments')
+    supplier = models.ForeignKey('contacts.Contact', on_delete=models.CASCADE, related_name='order_assignments')
+    
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    email_sent = models.BooleanField(default=False)
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+    email_error = models.TextField(blank=True)
+    
+    class Meta:
+        db_table = 'rfq_ordersupplierassignment'
+        unique_together = ['order', 'supplier']
+        ordering = ['-assigned_at']
+    
+    def __str__(self):
+        return f"{self.order.rfq_number} -> {self.supplier.company_name}"
 
 
 class OrderItem(models.Model):

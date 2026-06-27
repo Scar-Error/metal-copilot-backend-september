@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, date
 from typing import Dict, List, Optional
 
 from django.conf import settings
@@ -186,14 +187,15 @@ class EmailIngestionOrchestrator:
         )
 
         for email in emails:
-            classification = self._classifier.classify(email)
-            if classification == 'other':
-                logger.debug('Email %s classified as OTHER, skipping', email.get('id', ''))
+            msg_id = email.get('id', '')
+            # Skip emails that already exist
+            if msg_id in existing_ids:
+                logger.debug('Email %s is new (already in system), skipping', msg_id)
                 continue
 
-            msg_id = email.get('id', '')
-            if msg_id in existing_ids:
-                logger.debug('Email %s already processed, skipping', msg_id)
+            classification = self._classifier.classify(email)
+            if classification == 'other':
+                logger.debug('Email %s classified as OTHER, skipping', msg_id)
                 continue
 
             try:
@@ -291,20 +293,132 @@ class EmailIngestionOrchestrator:
                     order.rfq_number, exc,
                 )
 
+        # Sync to Business Central
+        try:
+            from rfq.business_central import create_quotation_in_bc
+            result = create_quotation_in_bc(order)
+            if result:
+                order.status = 'processing'
+                order.save(update_fields=['status'])
+                logger.info('BC sync complete for Order %s', order.rfq_number)
+            else:
+                logger.error('BC sync failed for Order %s', order.rfq_number)
+        except Exception as exc:
+            logger.error(
+                'Failed to sync to BC for Order %s: %s',
+                order.rfq_number, exc,
+            )
+
         if order.supplier_email or order.supplier:
             from rfq.tasks import dispatch_to_supplier
             dispatch_to_supplier.delay(order.id)
 
     def _handle_quotation(self, email: EmailMessage, order: Order) -> None:
         """
-        Stub: handle incoming supplier quotation.
-        Will be implemented in a future phase to extract pricing
-        and match items against the original RFQ.
+        Handle incoming supplier quotation.
+        Extract item prices from email/attachment, match to RFQ items,
+        update OrderItem records with supplier prices, and set stage to negotiation.
         """
         logger.info(
-            'Quotation received for Order %s — handler not yet implemented',
+            'Processing quotation for Order %s',
             order.rfq_number,
         )
+
+        text_to_extract = email.get('body', '')
+
+        # Extract text from attachments if present
+        if email.get('has_attachments'):
+            attachments = self._email_provider.get_attachments(email['id'])
+            for att in attachments:
+                content = self._email_provider.download_attachment(
+                    email['id'], att['id'],
+                )
+                if content:
+                    saved = self._attachment_service.save_attachment(
+                        order, att, content,
+                    )
+                    if saved:
+                        file_text = extract_text(saved.file_path)
+                        if file_text:
+                            text_to_extract = file_text
+                            logger.info(
+                                'Extracted text from attachment %s for quotation',
+                                att.get('name', 'unknown')
+                            )
+                            break
+
+        # Extract prices using AI or keyword extractor
+        extracted = self._data_extractor.extract(text_to_extract)
+        if extracted is None:
+            extracted = self._fallback_extractor.extract(text_to_extract)
+
+        if not extracted or not extracted.get('items'):
+            logger.warning(
+                'No items extracted from quotation for Order %s',
+                order.rfq_number
+            )
+            return
+
+        # Match extracted items to existing OrderItems
+        items_updated = 0
+        for extracted_item in extracted.get('items', []):
+            item_name = extracted_item.get('name', '').lower()
+            item_code = extracted_item.get('part_number', '').lower()
+            supplier_price = extracted_item.get('unit_price')
+
+            if not supplier_price:
+                continue
+
+            # Try to match by item code first, then by name
+            matched_item = None
+            for order_item in order.items.all():
+                if item_code and order_item.item_code and item_code == order_item.item_code.lower():
+                    matched_item = order_item
+                    break
+                if item_name and item_name in order_item.item_name.lower():
+                    matched_item = order_item
+                    break
+
+            if matched_item:
+                matched_item.supplier_price = supplier_price
+                matched_item.save()
+                items_updated += 1
+                logger.info(
+                    'Updated supplier price for item %s: %s',
+                    matched_item.item_name, supplier_price
+                )
+            else:
+                logger.warning(
+                    'Could not match extracted item "%s" to any OrderItem',
+                    extracted_item.get('name', 'unknown')
+                )
+
+        if items_updated > 0:
+            order.stage = 'negotiation'
+            order.save(update_fields=['stage'])
+            logger.info(
+                'Updated %d item prices from quotation for Order %s, stage set to negotiation',
+                items_updated, order.rfq_number
+            )
+        else:
+            logger.warning(
+                'No items were updated from quotation for Order %s',
+                order.rfq_number
+            )
+
+        # Sync to Business Central
+        try:
+            from rfq.business_central import create_quotation_in_bc
+            result = create_quotation_in_bc(order)
+            if result:
+                logger.info('BC sync complete for Order %s (quotation)', order.rfq_number)
+            else:
+                logger.error('BC sync failed for Order %s (quotation)', order.rfq_number)
+        except Exception as exc:
+            logger.error(
+                'Failed to sync to BC for Order %s: %s',
+                order.rfq_number, exc,
+            )
 
     def _handle_other(self, email: EmailMessage, order: Order) -> None:
         """Stub: handle other email types (future use)."""

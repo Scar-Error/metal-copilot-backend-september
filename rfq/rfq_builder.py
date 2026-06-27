@@ -82,7 +82,22 @@ class RfqBuilder:
         """Update an Order record with AI-extracted data (no pricing)."""
         order.company_name = data.get('company_name', order.company_name)
         order.items_description = data.get('description') or data.get('items_description', '')
-        order.quantity = data.get('quantity')
+        
+        # Validate and convert quantity to number
+        qty = data.get('quantity')
+        try:
+            if isinstance(qty, str):
+                qty = float(qty) if qty.replace('.', '', 1).isdigit() else None
+            elif qty is None or qty == 'Not specified':
+                qty = None
+        except (ValueError, TypeError, AttributeError):
+            qty = None
+            logger.warning(
+                'Invalid quantity "%s" for order %s, setting to None',
+                data.get('quantity'), order.rfq_number
+            )
+        order.quantity = qty
+        
         order.specifications = data.get('specifications', '')
         order.ai_confidence_score = data.get('confidence_score')
 
@@ -110,6 +125,21 @@ class RfqBuilder:
     @staticmethod
     def _create_items(order: Order, items: List[Dict[str, Any]]) -> None:
         for idx, item_data in enumerate(items):
+            # Validate and convert quantity to number
+            qty = item_data.get('quantity', 0)
+            try:
+                if isinstance(qty, str):
+                    # Try to convert string to number
+                    qty = float(qty) if qty.replace('.', '', 1).isdigit() else 0
+                elif qty is None:
+                    qty = 0
+            except (ValueError, TypeError, AttributeError):
+                qty = 0
+                logger.warning(
+                    'Invalid quantity "%s" for item %s, defaulting to 0',
+                    item_data.get('quantity'), item_data.get('item_name', f'Item {idx + 1}')
+                )
+
             OrderItem.objects.create(
                 order=order,
                 item_name=item_data.get('item_name')
@@ -117,7 +147,7 @@ class RfqBuilder:
                 item_code=item_data.get('item_code')
                     or item_data.get('part_number', ''),
                 description=item_data.get('description', ''),
-                quantity=item_data.get('quantity', 0),
+                quantity=qty,
                 unit=item_data.get('unit', ''),
                 extraction_confidence=item_data.get('confidence_score'),
             )

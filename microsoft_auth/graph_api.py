@@ -258,6 +258,9 @@ class GraphEmailProvider:
                 resp.raise_for_status()
                 if resp.status_code == 204:
                     return {}
+                # Handle empty response body
+                if not resp.text or resp.text.strip() == '':
+                    return {}
                 return resp.json()
             except requests.HTTPError as exc:
                 status = exc.response.status_code if exc.response is not None else 0

@@ -140,6 +140,12 @@ MICROSOFT_REDIRECT_URI = os.environ.get(
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
 
 # ---------------------------------------------------------------------------
+# Business Central
+# ---------------------------------------------------------------------------
+BC_API_URL = os.environ.get('BC_API_URL', 'https://api.businesscentral.dynamics.com/v2.0')
+BC_COMPANY_NAME = os.environ.get('BC_COMPANY_NAME', '')
+
+# ---------------------------------------------------------------------------
 # AI
 # ---------------------------------------------------------------------------
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')

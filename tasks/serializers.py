@@ -19,3 +19,8 @@ class TaskSerializer(serializers.ModelSerializer):
             'created_at', 'completed_at',
         ]
         read_only_fields = ['id', 'created_at', 'completed_at']
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['completed'] = instance.status == 'completed'
+        return data
