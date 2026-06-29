@@ -25,6 +25,13 @@ class BusinessCentralClient:
             response = requests.get(url, headers=self.headers, timeout=30)
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.HTTPError as exc:
+            logger.error(
+                'BC GET request failed: HTTP %s - %s',
+                exc.response.status_code,
+                exc.response.text,
+            )
+            return None
         except Exception as exc:
             logger.error('BC GET request failed: %s', exc)
             return None
@@ -36,6 +43,13 @@ class BusinessCentralClient:
             response = requests.post(url, headers=self.headers, json=data, timeout=30)
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.HTTPError as exc:
+            logger.error(
+                'BC POST request failed: HTTP %s - %s',
+                exc.response.status_code,
+                exc.response.text,
+            )
+            return None
         except Exception as exc:
             logger.error('BC POST request failed: %s', exc)
             return None
@@ -47,6 +61,13 @@ class BusinessCentralClient:
             response = requests.patch(url, headers=self.headers, json=data, timeout=30)
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.HTTPError as exc:
+            logger.error(
+                'BC PATCH request failed: HTTP %s - %s',
+                exc.response.status_code,
+                exc.response.text,
+            )
+            return None
         except Exception as exc:
             logger.error('BC PATCH request failed: %s', exc)
             return None
@@ -72,6 +93,16 @@ class BusinessCentralClient:
         if result and 'value' in result:
             return result['value']
         return []
+
+    def get_customer_by_name(self, company_id: str, customer_name: str) -> Optional[Dict]:
+        """Get customer by name. Returns customer or None."""
+        customers = self.get_customers(company_id)
+        for customer in customers:
+            if customer.get('displayName', '').lower() == customer_name.lower():
+                return customer
+            if customer.get('name', '').lower() == customer_name.lower():
+                return customer
+        return None
 
     def get_items(self, company_id: str) -> List[Dict]:
         """Get items for a specific company."""
@@ -172,15 +203,25 @@ def create_quotation_in_bc(order) -> bool:
         )
         return False
 
+    bc_customer = client.get_customer_by_name(company_id, order.company_name)
+    if not bc_customer:
+        customers = client.get_customers(company_id)
+        available = [f'{c.get("number", "?")} - {c.get("displayName", c.get("name", "?"))}' for c in customers]
+        logger.error(
+            'No matching BC customer found for "%s" on order %s. '
+            'Available customers: %s',
+            order.company_name, order.rfq_number,
+            ', '.join(available) if available else 'NONE',
+        )
+        return False
+
     quote_data: Dict[str, Any] = {
-        'sellToCustomerNumber': order.company_name,
+        'customerNumber': bc_customer.get('number'),
         'documentDate': order.created_at.strftime('%Y-%m-%d'),
-        'dueDate': (
-            order.delivery_date.strftime('%Y-%m-%d')
-            if order.delivery_date else ''
-        ),
         'currencyCode': 'EUR',
     }
+    if order.delivery_date:
+        quote_data['dueDate'] = order.delivery_date.strftime('%Y-%m-%d')
 
     try:
         result = client.create_sales_quote(company_id, quote_data)
@@ -234,12 +275,10 @@ def create_purchase_order_in_bc(order) -> bool:
     po_data: Dict[str, Any] = {
         'buyFromVendorNumber': order.supplier.company_name if order.supplier else '',
         'documentDate': order.created_at.strftime('%Y-%m-%d'),
-        'dueDate': (
-            order.delivery_date.strftime('%Y-%m-%d')
-            if order.delivery_date else ''
-        ),
         'currencyCode': 'EUR',
     }
+    if order.delivery_date:
+        po_data['dueDate'] = order.delivery_date.strftime('%Y-%m-%d')
 
     try:
         result = client.create_purchase_order(company_id, po_data)
