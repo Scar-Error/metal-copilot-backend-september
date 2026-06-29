@@ -1,9 +1,9 @@
 from django.urls import path, include
-from rest_framework.routers import DefaultRouter
+from rest_framework.routers import SimpleRouter
 from .views import OrderViewSet, OrderItemViewSet, OrderAttachmentViewSet, DealViewSet
 from . import views_email
 
-router = DefaultRouter()
+router = SimpleRouter()
 router.register(r'orders', OrderViewSet, basename='order')
 router.register(r'items', OrderItemViewSet, basename='orderitem')
 router.register(r'attachments', OrderAttachmentViewSet, basename='orderattachment')

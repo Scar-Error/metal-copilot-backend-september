@@ -24,6 +24,7 @@ app.conf.beat_schedule = {
 app.conf.task_routes = {
     'rfq.tasks.monitor_emails_for_rfqs': {'queue': 'email_polling'},
     'rfq.tasks.process_user_emails': {'queue': 'email_polling'},
+    'rfq.tasks.sync_with_business_central': {'queue': 'email_polling'},
     'rfq.tasks.process_rfq_with_ai': {'queue': 'ai_processing'},
     'rfq.tasks.dispatch_to_supplier': {'queue': 'email_dispatch'},
     'rfq.tasks.cleanup_old_attachments': {'queue': 'housekeeping'},

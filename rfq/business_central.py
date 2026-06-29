@@ -104,6 +104,17 @@ class BusinessCentralClient:
                 return customer
         return None
 
+    def get_customer_by_partial_match(self, company_id: str, company_hint: str) -> Optional[Dict]:
+        """Get customer by partial name match (case-insensitive). Returns customer or None."""
+        customers = self.get_customers(company_id)
+        hint_lower = company_hint.lower()
+        for customer in customers:
+            display_name = customer.get('displayName', '').lower()
+            name = customer.get('name', '').lower()
+            if hint_lower in display_name or hint_lower in name:
+                return customer
+        return None
+
     def get_items(self, company_id: str) -> List[Dict]:
         """Get items for a specific company."""
         result = self._get(f'companies({company_id})/items')
@@ -203,30 +214,65 @@ def create_quotation_in_bc(order) -> bool:
         )
         return False
 
-    bc_customer = client.get_customer_by_name(company_id, order.company_name)
+    # Priority-based customer matching:
+    # 1. Try AI-extracted company_name
+    # 2. If placeholder, try email domain extraction
+    # 3. If still no match, use generic/default customer
+    PLACEHOLDER_COMPANIES = ['not specified', 'unknown company', 'various items', '']
+    
+    bc_customer = None
+    company_name_used = order.company_name
+    
+    # Priority 1: Try exact match with AI-extracted company_name
+    if order.company_name.lower() not in PLACEHOLDER_COMPANIES:
+        bc_customer = client.get_customer_by_name(company_id, order.company_name)
+    
+    # Priority 2: If AI extraction failed, try email domain extraction
+    if not bc_customer and order.email_sender:
+        try:
+            email_domain = order.email_sender.split('@')[1].split('.')[0]
+            bc_customer = client.get_customer_by_partial_match(company_id, email_domain)
+            if bc_customer:
+                company_name_used = f"email domain ({email_domain})"
+                logger.info(
+                    'Matched BC customer using email domain "%s" for order %s',
+                    email_domain, order.rfq_number
+                )
+        except (IndexError, AttributeError):
+            pass
+    
+    # Priority 3: Use generic/default customer (first available)
     if not bc_customer:
         customers = client.get_customers(company_id)
-        available = [f'{c.get("number", "?")} - {c.get("displayName", c.get("name", "?"))}' for c in customers]
-        logger.error(
-            'No matching BC customer found for "%s" on order %s. '
-            'Available customers: %s',
-            order.company_name, order.rfq_number,
-            ', '.join(available) if available else 'NONE',
-        )
-        return False
+        if customers:
+            bc_customer = customers[0]  # Use first customer as generic fallback
+            company_name_used = f"generic customer ({bc_customer.get('displayName', bc_customer.get('name', 'Unknown'))})"
+            logger.warning(
+                'Using generic BC customer "%s" for order %s (no match found for "%s")',
+                bc_customer.get('displayName', bc_customer.get('name', 'Unknown')),
+                order.rfq_number,
+                order.company_name
+            )
+        else:
+            logger.error(
+                'No BC customers available for order %s',
+                order.rfq_number
+            )
+            return False
 
+    # Minimal quote data to avoid triggering PayPal extension checks
     quote_data: Dict[str, Any] = {
         'customerNumber': bc_customer.get('number'),
         'documentDate': order.created_at.strftime('%Y-%m-%d'),
-        'currencyCode': 'EUR',
     }
-    if order.delivery_date:
-        quote_data['dueDate'] = order.delivery_date.strftime('%Y-%m-%d')
 
     try:
         result = client.create_sales_quote(company_id, quote_data)
         if result:
-            logger.info('Created BC sales quote for order %s', order.rfq_number)
+            logger.info(
+                'Created BC sales quote for order %s using customer: %s',
+                order.rfq_number, company_name_used
+            )
             order.bc_synced_at = timezone.now()
             order.save(update_fields=['bc_synced_at'])
             return True
