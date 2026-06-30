@@ -38,17 +38,32 @@ Return the data in JSON format with these fields:
 - description: Overall description of what is being requested
 - delivery_date: Required delivery date (if available, use YYYY-MM-DD format)
 - items: Array of individual line items with:
-  - description: Item description
-  - part_number: Part number / SKU (if available)
-  - quantity: Quantity requested
-  - unit: Unit of measurement (pcs, kg, meters, etc.)
+  - item_number: The numeric value from the Item # column (e.g., 1, 2, 3)
+  - description: The actual material/tools description from the Material / Tools Description column (NOT the header text)
+  - part_number: The actual part number from Supplier / Part No. column (extract only the part number after slash, e.g., "07230" from "Vector / 07230")
+  - quantity: The numeric quantity value from the Quantity column (e.g., 1, 2, 10). If quantity is not specified but item exists, assume 1.
+  - unit: The exact unit text from the Unit column (e.g., "PC", "PCS", "pcs", "kg"). If unit is not specified but item exists, assume "PC".
 
-Extract only what is explicitly present. Do NOT extract pricing information.
+CRITICAL RULES:
+- Extract ALL items from the table - count the number of rows and ensure every single row is extracted
+- DO NOT stop after extracting the first 3-4 items - extract EVERY item in the table
+- Extract the ACTUAL VALUES from table rows, NOT the column headers
+- Do NOT extract "Item #", "Material / Tools Description", "Supplier / Part No." as values
+- Extract real data like "Vector VN5620", "CANoe PRO", "07230", "55000", etc.
+- For part numbers, extract only the code after the slash (e.g., from "Vector / 07230" extract "07230")
+- Pay SPECIAL attention to quantity values - extract the EXACT numeric value from the Quantity column (e.g., if it says "2", extract 2, not 1)
+- Pay SPECIAL attention to unit values - extract the exact values from their respective columns
+- If quantity or unit is empty/null for an item that exists in the table, use 1 for quantity and "PC" for unit as default
+- Do NOT extract pricing information
+- The items array MUST contain all rows from the table - if there are 8 rows, return 8 items
+- For DOCX tables, each row separated by | represents one item - extract all rows
 
 Text content:
-{text[:4000]}"""
+{text[:50000]}"""
 
         try:
+            logger.info('Starting AI extraction from %s (text length: %d chars)', source_label, len(text))
+            
             response = self._client.chat.completions.create(
                 model=getattr(settings, 'OPENAI_MODEL', 'gpt-3.5-turbo'),
                 messages=[
@@ -62,21 +77,40 @@ Text content:
                     {'role': 'user', 'content': prompt},
                 ],
                 temperature=float(getattr(settings, 'OPENAI_TEMPERATURE', 0.3)),
-                max_tokens=int(getattr(settings, 'OPENAI_MAX_TOKENS', 1500)),
+                max_tokens=int(getattr(settings, 'OPENAI_MAX_TOKENS', 4000)),
             )
 
             raw = response.choices[0].message.content
+            logger.info('OpenAI raw response (first 3000 chars): %s', raw[:3000])
             # Strip markdown code fences if present (e.g. ```json ... ```)
             if raw.startswith('```'):
                 raw = raw.strip('`')
                 if raw.startswith('json'):
                     raw = raw[4:].lstrip()
             data: dict = json.loads(raw)
+            
+            # Log extracted data details
+            logger.info('AI Extraction Results:')
+            logger.info('  - Company Name: %s', data.get('company_name', 'N/A'))
+            logger.info('  - Description: %s', data.get('description', 'N/A'))
+            logger.info('  - Delivery Date: %s', data.get('delivery_date', 'N/A'))
+            logger.info('  - Number of Items Extracted: %d', len(data.get('items', [])))
+            
+            # Log each item extracted
+            for idx, item in enumerate(data.get('items', []), 1):
+                logger.info('  - Item %d: part_number=%s, description=%s, quantity=%s, unit=%s',
+                           idx, item.get('part_number', 'N/A'),
+                           item.get('description', 'N/A')[:50] if item.get('description') else 'N/A',
+                           item.get('quantity', 'N/A'),
+                           item.get('unit', 'N/A'))
+            
             data['confidence_score'] = 0.85
+            logger.info('AI extraction completed successfully with confidence score: 0.85')
             return ExtractedRfqData(**data)
 
-        except json.JSONDecodeError:
-            logger.error('OpenAI response was not valid JSON')
+        except json.JSONDecodeError as exc:
+            logger.error('OpenAI response was not valid JSON: %s', exc)
+            logger.error('Raw response that failed to parse: %s', raw[:1000] if 'raw' in locals() else 'N/A')
             return None
         except Exception as exc:
             logger.error('OpenAI extraction error: %s', exc)
@@ -88,7 +122,10 @@ class KeywordExtractor:
 
     def extract(self, text: str, source_label: str = '') -> Optional[ExtractedRfqData]:
         if not text.strip():
+            logger.warning('Keyword extraction: Empty text provided for %s', source_label)
             return None
+
+        logger.info('Starting keyword extraction from %s (text length: %d chars)', source_label, len(text))
 
         company = self._first_match(text, [
             r'from\s*:\s*(.+)',
@@ -134,6 +171,24 @@ class KeywordExtractor:
                 'quantity': quantity or 1,
                 'unit': 'pcs',
             })
+
+        # Log keyword extraction results
+        logger.info('Keyword Extraction Results:')
+        logger.info('  - Company Name: %s', company or 'N/A')
+        logger.info('  - Description: %s', description or 'N/A')
+        logger.info('  - Part Number: %s', part_number or 'N/A')
+        logger.info('  - Quantity: %s', quantity or 'N/A')
+        logger.info('  - Delivery Date: %s', delivery_date or 'N/A')
+        logger.info('  - Number of Items Extracted: %d', len(items))
+        
+        for idx, item in enumerate(items, 1):
+            logger.info('  - Item %d: part_number=%s, description=%s, quantity=%s, unit=%s',
+                       idx, item.get('part_number', 'N/A'),
+                       item.get('description', 'N/A')[:50] if item.get('description') else 'N/A',
+                       item.get('quantity', 'N/A'),
+                       item.get('unit', 'N/A'))
+        
+        logger.info('Keyword extraction completed with confidence score: 0.5')
 
         return ExtractedRfqData(
             company_name=company or 'Unknown Company',

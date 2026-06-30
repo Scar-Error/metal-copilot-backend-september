@@ -22,9 +22,12 @@ class BusinessCentralClient:
         """Make a GET request to BC API."""
         try:
             url = f"{self.base_url}/{endpoint}"
+            logger.info('BC GET Request: %s', url)
             response = requests.get(url, headers=self.headers, timeout=30)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info('BC GET Response (first 500 chars): %s', str(result)[:500])
+            return result
         except requests.exceptions.HTTPError as exc:
             logger.error(
                 'BC GET request failed: HTTP %s - %s',
@@ -40,9 +43,13 @@ class BusinessCentralClient:
         """Make a POST request to BC API."""
         try:
             url = f"{self.base_url}/{endpoint}"
+            logger.info('BC POST Request: %s', url)
+            logger.info('BC POST Data being sent: %s', str(data)[:1000])
             response = requests.post(url, headers=self.headers, json=data, timeout=30)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info('BC POST Response (first 500 chars): %s', str(result)[:500])
+            return result
         except requests.exceptions.HTTPError as exc:
             logger.error(
                 'BC POST request failed: HTTP %s - %s',
@@ -58,9 +65,13 @@ class BusinessCentralClient:
         """Make a PATCH request to BC API."""
         try:
             url = f"{self.base_url}/{endpoint}"
+            logger.info('BC PATCH Request: %s', url)
+            logger.info('BC PATCH Data being sent: %s', str(data)[:1000])
             response = requests.patch(url, headers=self.headers, json=data, timeout=30)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info('BC PATCH Response (first 500 chars): %s', str(result)[:500])
+            return result
         except requests.exceptions.HTTPError as exc:
             logger.error(
                 'BC PATCH request failed: HTTP %s - %s',
@@ -107,13 +118,77 @@ class BusinessCentralClient:
     def get_customer_by_partial_match(self, company_id: str, company_hint: str) -> Optional[Dict]:
         """Get customer by partial name match (case-insensitive). Returns customer or None."""
         customers = self.get_customers(company_id)
+        logger.info(
+            'Partial match search for "%s" in company %s: found %d customers',
+            company_hint, company_id, len(customers) if customers else 0
+        )
         hint_lower = company_hint.lower()
         for customer in customers:
             display_name = customer.get('displayName', '').lower()
             name = customer.get('name', '').lower()
             if hint_lower in display_name or hint_lower in name:
+                logger.info(
+                    'Partial match found: "%s" matches customer "%s"',
+                    company_hint, customer.get('displayName', customer.get('name', 'Unknown'))
+                )
                 return customer
+        logger.info('No partial match found for "%s"', company_hint)
         return None
+
+    def create_customer(self, company_id: str, customer_name: str, email: str = '') -> Optional[Dict]:
+        """Create a new customer in BC. Returns created customer or None."""
+        # Use default posting group from settings
+        default_posting_group = getattr(settings, 'BC_DEFAULT_CUSTOMER_POSTING_GROUP', 'FOREIGN')
+        
+        customer_data = {
+            'displayName': customer_name,
+            'type': 'Company',
+            'customerPostingGroup': default_posting_group,
+        }
+        if email:
+            customer_data['email'] = email
+        
+        logger.info('Creating customer with posting group: %s', default_posting_group)
+        
+        result = self._post(f'companies({company_id})/customers', customer_data)
+        if result:
+            logger.info(
+                'Created new BC customer "%s" in company %s (number: %s)',
+                customer_name, company_id, result.get('number', 'N/A')
+            )
+            return result
+        logger.error(
+            'Failed to create BC customer "%s" in company %s',
+            customer_name, company_id
+        )
+        return None
+
+    def update_customer_posting_group(self, company_id: str, customer_id: str, posting_group: str) -> bool:
+        """Update Customer Posting Group for an existing customer.
+        
+        Note: This field may not be available in all BC API versions.
+        Returns True if successful or if field is not supported.
+        """
+        try:
+            result = self._patch(
+                f'companies({company_id})/customers({customer_id})',
+                {'customerPostingGroup': posting_group}
+            )
+            if result:
+                logger.info(
+                    'Updated Customer Posting Group to "%s" for customer %s',
+                    posting_group, customer_id
+                )
+                return True
+            logger.warning(
+                'Customer Posting Group field may not be supported in this BC version'
+            )
+            return True  # Don't fail if field is not supported
+        except Exception as exc:
+            logger.warning(
+                'Failed to update Customer Posting Group (field may not be supported): %s', exc
+            )
+            return True  # Don't fail if field is not supported
 
     def get_items(self, company_id: str) -> List[Dict]:
         """Get items for a specific company."""
@@ -182,6 +257,24 @@ def build_bc_client_for_user(user) -> Optional[BusinessCentralClient]:
 
 def create_quotation_in_bc(order) -> bool:
     """Create a sales quotation in BC from an Order record."""
+    logger.info('='*80)
+    logger.info('Starting BC quotation creation for order %s', order.rfq_number)
+    logger.info('Order Details:')
+    logger.info('  - RFQ Number: %s', order.rfq_number)
+    logger.info('  - Company Name: %s', order.company_name)
+    logger.info('  - Email Sender: %s', order.email_sender)
+    logger.info('  - Items Description: %s', order.items_description)
+    logger.info('  - Quantity: %s', order.quantity)
+    logger.info('  - Delivery Date: %s', order.delivery_date)
+    logger.info('  - Budget: %s', order.budget)
+    logger.info('  - Number of Order Items: %d', order.items.count())
+    
+    for idx, item in enumerate(order.items.all(), 1):
+        logger.info('  - Order Item %d: name=%s, code=%s, quantity=%s, unit=%s, unit_price=%s',
+                   idx, item.item_name, item.item_code, item.quantity, item.unit, item.unit_price)
+    
+    logger.info('='*80)
+    
     user = order.reviewed_by
     if not user:
         # Fall back to admin user if no reviewer is set
@@ -198,6 +291,7 @@ def create_quotation_in_bc(order) -> bool:
 
     client = build_bc_client_for_user(user)
     if not client:
+        logger.error('Failed to build BC client for order %s', order.rfq_number)
         return False
 
     from django.conf import settings
@@ -213,46 +307,154 @@ def create_quotation_in_bc(order) -> bool:
             company_name, order.rfq_number
         )
         return False
+    
+    logger.info('BC Company ID found: %s for company "%s"', company_id, company_name)
 
     # Priority-based customer matching:
-    # 1. Try AI-extracted company_name
-    # 2. If placeholder, try email domain extraction
-    # 3. If still no match, use generic/default customer
+    # 1. Try exact match with AI-extracted company_name
+    # 2. Try partial match with company name keywords
+    # 3. Try email domain extraction
+    # 4. Create customer from email domain (Option 3)
+    # 5. Create customer from company name (Option 1)
+    # 6. Use generic/default customer (last resort)
     PLACEHOLDER_COMPANIES = ['not specified', 'unknown company', 'various items', '']
-    
+
     bc_customer = None
     company_name_used = order.company_name
-    
+
     # Priority 1: Try exact match with AI-extracted company_name
     if order.company_name.lower() not in PLACEHOLDER_COMPANIES:
         bc_customer = client.get_customer_by_name(company_id, order.company_name)
-    
-    # Priority 2: If AI extraction failed, try email domain extraction
+        if bc_customer:
+            # Check if customer has a valid posting group
+            posting_group = bc_customer.get('customerPostingGroup') or bc_customer.get('customerPostingGroupCode')
+            if not posting_group or posting_group == '' or posting_group == '0':
+                logger.warning(
+                    'Customer %s (%s) has no valid Customer Posting Group (value: %s), will try other matching methods',
+                    bc_customer.get('displayName', 'Unknown'), bc_customer.get('number', 'Unknown'), posting_group
+                )
+                # Set bc_customer to None to try other matching methods
+                bc_customer = None
+            else:
+                company_name_used = order.company_name
+                logger.info(
+                    'Matched BC customer using exact company name "%s" for order %s with posting group: %s',
+                    order.company_name, order.rfq_number, posting_group
+                )
+
+    # Priority 2: Try partial match with company name keywords
+    if not bc_customer and order.company_name.lower() not in PLACEHOLDER_COMPANIES:
+        # Extract keywords from company name (split by space, take first 2-3 words)
+        company_keywords = order.company_name.split()[:3]
+        logger.info(
+            'Trying partial BC customer match for order %s using keywords: %s',
+            order.rfq_number, company_keywords
+        )
+        for keyword in company_keywords:
+            if len(keyword) > 3:  # Skip very short words
+                bc_customer = client.get_customer_by_partial_match(company_id, keyword)
+                if bc_customer:
+                    # Check if customer has a valid posting group
+                    posting_group = bc_customer.get('customerPostingGroup') or bc_customer.get('customerPostingGroupCode')
+                    if not posting_group or posting_group == '' or posting_group == '0':
+                        logger.warning(
+                            'Customer %s (%s) has no valid Customer Posting Group (value: %s), will try other matching methods',
+                            bc_customer.get('displayName', 'Unknown'), bc_customer.get('number', 'Unknown'), posting_group
+                        )
+                        # Set bc_customer to None to try other matching methods
+                        bc_customer = None
+                        continue
+                    else:
+                        company_name_used = f"partial match ({keyword})"
+                        logger.info(
+                            'Matched BC customer using partial company name "%s" for order %s with posting group: %s',
+                            keyword, order.rfq_number, posting_group
+                        )
+                        break
+
+    # Priority 3: Try email domain extraction
     if not bc_customer and order.email_sender:
         try:
             email_domain = order.email_sender.split('@')[1].split('.')[0]
             bc_customer = client.get_customer_by_partial_match(company_id, email_domain)
             if bc_customer:
-                company_name_used = f"email domain ({email_domain})"
-                logger.info(
-                    'Matched BC customer using email domain "%s" for order %s',
-                    email_domain, order.rfq_number
-                )
+                # Check if customer has a valid posting group
+                posting_group = bc_customer.get('customerPostingGroup') or bc_customer.get('customerPostingGroupCode')
+                if not posting_group or posting_group == '' or posting_group == '0':
+                    logger.warning(
+                        'Customer %s (%s) has no valid Customer Posting Group (value: %s), will create new customer instead',
+                        bc_customer.get('displayName', 'Unknown'), bc_customer.get('number', 'Unknown'), posting_group
+                    )
+                    # Set bc_customer to None to trigger new customer creation
+                    bc_customer = None
+                else:
+                    company_name_used = f"email domain ({email_domain})"
+                    logger.info(
+                        'Matched BC customer using email domain "%s" for order %s with posting group: %s',
+                        email_domain, order.rfq_number, posting_group
+                    )
         except (IndexError, AttributeError):
             pass
-    
-    # Priority 3: Use generic/default customer (first available)
+
+    # Priority 4: Create customer from email domain (Option 3)
+    if not bc_customer and order.email_sender:
+        try:
+            logger.info('Priority 4: Attempting to create BC customer from email for order %s', order.rfq_number)
+            email_domain = order.email_sender.split('@')[1]
+            customer_name_from_email = email_domain.split('.')[0].capitalize()
+            # Use company name + email domain for unique customer name
+            unique_customer_name = f"{order.company_name} ({customer_name_from_email})"
+            logger.info('Extracted customer name from email: "%s", unique name: "%s"', customer_name_from_email, unique_customer_name)
+            bc_customer = client.create_customer(company_id, unique_customer_name, order.email_sender)
+            if bc_customer:
+                company_name_used = f"created from email ({unique_customer_name})"
+                logger.info(
+                    'Created BC customer from email "%s" for order %s',
+                    unique_customer_name, order.rfq_number
+                )
+        except (IndexError, AttributeError) as exc:
+            logger.warning('Failed to create customer from email: %s', exc)
+
+    # Priority 5: Create customer from company name (Option 1)
+    if not bc_customer and order.company_name.lower() not in PLACEHOLDER_COMPANIES:
+        try:
+            logger.info('Priority 5: Attempting to create BC customer from company name for order %s', order.rfq_number)
+            bc_customer = client.create_customer(company_id, order.company_name, order.email_sender or '')
+            if bc_customer:
+                company_name_used = f"created from company name ({order.company_name})"
+                logger.info(
+                    'Created BC customer from company name "%s" for order %s',
+                    order.company_name, order.rfq_number
+                )
+        except Exception as exc:
+            logger.warning('Failed to create customer from company name: %s', exc)
+
+    # Priority 6: Use generic/default customer (last resort)
     if not bc_customer:
         customers = client.get_customers(company_id)
         if customers:
-            bc_customer = customers[0]  # Use first customer as generic fallback
-            company_name_used = f"generic customer ({bc_customer.get('displayName', bc_customer.get('name', 'Unknown'))})"
-            logger.warning(
-                'Using generic BC customer "%s" for order %s (no match found for "%s")',
-                bc_customer.get('displayName', bc_customer.get('name', 'Unknown')),
-                order.rfq_number,
-                order.company_name
-            )
+            # Find first customer with valid posting group
+            for customer in customers:
+                posting_group = customer.get('customerPostingGroup') or customer.get('customerPostingGroupCode')
+                if posting_group and posting_group != '' and posting_group != '0':
+                    bc_customer = customer
+                    company_name_used = f"generic customer ({customer.get('displayName', customer.get('name', 'Unknown'))})"
+                    logger.warning(
+                        'Using generic BC customer "%s" for order %s (no match found for "%s") with posting group: %s',
+                        customer.get('displayName', customer.get('name', 'Unknown')),
+                        order.rfq_number,
+                        order.company_name,
+                        posting_group
+                    )
+                    break
+            
+            # If no customer with valid posting group found, create a new one
+            if not bc_customer:
+                logger.warning('No BC customer with valid posting group found, creating new customer')
+                bc_customer = client.create_customer(company_id, order.company_name or 'Unknown Customer', order.email_sender or '')
+                if bc_customer:
+                    company_name_used = f"created new customer ({order.company_name or 'Unknown'})"
+                    logger.info('Created new customer as fallback for order %s', order.rfq_number)
         else:
             logger.error(
                 'No BC customers available for order %s',
@@ -265,19 +467,30 @@ def create_quotation_in_bc(order) -> bool:
         'customerNumber': bc_customer.get('number'),
         'documentDate': order.created_at.strftime('%Y-%m-%d'),
     }
+    
+    logger.info('BC Quote Data being sent:')
+    logger.info('  - Customer Number: %s', bc_customer.get('number'))
+    logger.info('  - Customer Display Name: %s', bc_customer.get('displayName'))
+    logger.info('  - Document Date: %s', quote_data['documentDate'])
+    logger.info('  - Customer Match Method: %s', company_name_used)
 
     try:
         result = client.create_sales_quote(company_id, quote_data)
         if result:
-            logger.info(
-                'Created BC sales quote for order %s using customer: %s',
-                order.rfq_number, company_name_used
-            )
+            logger.info('='*80)
+            logger.info('BC Sales Quote Created Successfully for order %s', order.rfq_number)
+            logger.info('BC Response Data:')
+            logger.info('  - Quote ID: %s', result.get('id', 'N/A'))
+            logger.info('  - Quote Number: %s', result.get('number', 'N/A'))
+            logger.info('  - Customer Number: %s', result.get('customerNumber', 'N/A'))
+            logger.info('  - Document Date: %s', result.get('documentDate', 'N/A'))
+            logger.info('  - Status: %s', result.get('status', 'N/A'))
+            logger.info('='*80)
             order.bc_synced_at = timezone.now()
             order.save(update_fields=['bc_synced_at'])
             return True
         else:
-            logger.error('Failed to create BC sales quote for order %s', order.rfq_number)
+            logger.error('Failed to create BC sales quote for order %s - no result returned', order.rfq_number)
             return False
     except Exception as exc:
         logger.error('Error creating BC quotation for order %s: %s', order.rfq_number, exc)
@@ -286,6 +499,15 @@ def create_quotation_in_bc(order) -> bool:
 
 def create_purchase_order_in_bc(order) -> bool:
     """Create a purchase order in BC from an Order record."""
+    logger.info('='*80)
+    logger.info('Starting BC purchase order creation for order %s', order.rfq_number)
+    logger.info('Order Details:')
+    logger.info('  - RFQ Number: %s', order.rfq_number)
+    logger.info('  - Supplier: %s', order.supplier.company_name if order.supplier else 'N/A')
+    logger.info('  - Created At: %s', order.created_at)
+    logger.info('  - Delivery Date: %s', order.delivery_date)
+    logger.info('='*80)
+    
     user = order.reviewed_by
     if not user:
         # Fall back to admin user if no reviewer is set
@@ -302,6 +524,7 @@ def create_purchase_order_in_bc(order) -> bool:
 
     client = build_bc_client_for_user(user)
     if not client:
+        logger.error('Failed to build BC client for order %s', order.rfq_number)
         return False
 
     from django.conf import settings
@@ -317,6 +540,8 @@ def create_purchase_order_in_bc(order) -> bool:
             company_name, order.rfq_number
         )
         return False
+    
+    logger.info('BC Company ID found: %s for company "%s"', company_id, company_name)
 
     po_data: Dict[str, Any] = {
         'buyFromVendorNumber': order.supplier.company_name if order.supplier else '',
@@ -325,14 +550,28 @@ def create_purchase_order_in_bc(order) -> bool:
     }
     if order.delivery_date:
         po_data['dueDate'] = order.delivery_date.strftime('%Y-%m-%d')
+    
+    logger.info('BC PO Data being sent:')
+    logger.info('  - Vendor Number: %s', po_data['buyFromVendorNumber'])
+    logger.info('  - Document Date: %s', po_data['documentDate'])
+    logger.info('  - Currency Code: %s', po_data['currencyCode'])
+    logger.info('  - Due Date: %s', po_data.get('dueDate', 'N/A'))
 
     try:
         result = client.create_purchase_order(company_id, po_data)
         if result:
-            logger.info('Created BC purchase order for order %s', order.rfq_number)
+            logger.info('='*80)
+            logger.info('BC Purchase Order Created Successfully for order %s', order.rfq_number)
+            logger.info('BC Response Data:')
+            logger.info('  - PO ID: %s', result.get('id', 'N/A'))
+            logger.info('  - PO Number: %s', result.get('number', 'N/A'))
+            logger.info('  - Vendor Number: %s', result.get('buyFromVendorNumber', 'N/A'))
+            logger.info('  - Document Date: %s', result.get('documentDate', 'N/A'))
+            logger.info('  - Status: %s', result.get('status', 'N/A'))
+            logger.info('='*80)
             return True
         else:
-            logger.error('Failed to create BC purchase order for order %s', order.rfq_number)
+            logger.error('Failed to create BC purchase order for order %s - no result returned', order.rfq_number)
             return False
     except Exception as exc:
         logger.error('Error creating BC PO for order %s: %s', order.rfq_number, exc)

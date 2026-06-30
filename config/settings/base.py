@@ -144,6 +144,7 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
 # ---------------------------------------------------------------------------
 BC_API_URL = os.environ.get('BC_API_URL', 'https://api.businesscentral.dynamics.com/v2.0')
 BC_COMPANY_NAME = os.environ.get('BC_COMPANY_NAME', '')
+BC_SYNC_ENABLED = os.environ.get('BC_SYNC_ENABLED', 'False').lower() == 'true'
 
 # ---------------------------------------------------------------------------
 # AI

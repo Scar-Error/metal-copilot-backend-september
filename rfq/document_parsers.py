@@ -20,9 +20,11 @@ class PdfParser:
         try:
             from PyPDF2 import PdfReader
             reader = PdfReader(file_path)
-            return '\n'.join(
+            text = '\n'.join(
                 page.extract_text() or '' for page in reader.pages
             )
+            logger.info('PDF extraction: %d chars extracted from %s (%d pages)', len(text), file_path, len(reader.pages))
+            return text
         except Exception as exc:
             logger.error('PDF extraction error [%s]: %s', file_path, exc)
             return ''
@@ -40,7 +42,14 @@ class DocxParser:
         try:
             from docx import Document
             doc = Document(file_path)
-            return '\n'.join(p.text for p in doc.paragraphs)
+            text = '\n'.join(p.text for p in doc.paragraphs)
+            # Also extract tables
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = ' | '.join(cell.text for cell in row.cells)
+                    text += '\n' + row_text
+            logger.info('DOCX extraction: %d chars extracted from %s', len(text), file_path)
+            return text
         except Exception as exc:
             logger.error('DOCX extraction error [%s]: %s', file_path, exc)
             return ''

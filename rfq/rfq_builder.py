@@ -126,28 +126,30 @@ class RfqBuilder:
     def _create_items(order: Order, items: List[Dict[str, Any]]) -> None:
         for idx, item_data in enumerate(items):
             # Validate and convert quantity to number
-            qty = item_data.get('quantity', 0)
+            qty = item_data.get('quantity', 1)
             try:
                 if isinstance(qty, str):
                     # Try to convert string to number
-                    qty = float(qty) if qty.replace('.', '', 1).isdigit() else 0
-                elif qty is None:
-                    qty = 0
+                    qty = float(qty) if qty.replace('.', '', 1).isdigit() else 1
+                elif qty is None or qty == 0:
+                    qty = 1
             except (ValueError, TypeError, AttributeError):
-                qty = 0
+                qty = 1
                 logger.warning(
-                    'Invalid quantity "%s" for item %s, defaulting to 0',
-                    item_data.get('quantity'), item_data.get('item_name', f'Item {idx + 1}')
+                    'Invalid quantity "%s" for item %s, defaulting to 1',
+                    item_data.get('quantity'), item_data.get('description', f'Item {idx + 1}')
                 )
+
+            unit = item_data.get('unit', 'PC')
+            if not unit or unit is None:
+                unit = 'PC'
 
             OrderItem.objects.create(
                 order=order,
-                item_name=item_data.get('item_name')
-                    or item_data.get('description', f'Item {idx + 1}'),
-                item_code=item_data.get('item_code')
-                    or item_data.get('part_number', ''),
+                item_name=item_data.get('description', f'Item {idx + 1}'),
+                item_code=item_data.get('part_number', ''),
                 description=item_data.get('description', ''),
-                quantity=qty,
-                unit=item_data.get('unit', ''),
+                quantity=int(qty),
+                unit=unit,
                 extraction_confidence=item_data.get('confidence_score'),
             )

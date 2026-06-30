@@ -166,10 +166,10 @@ class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
 
     item_name = models.CharField(max_length=200)
-    item_code = models.CharField(max_length=100, blank=True)
+    item_code = models.CharField(max_length=100, blank=True, null=True)
     description = models.TextField(blank=True)
     quantity = models.IntegerField()
-    unit = models.CharField(max_length=50, blank=True)
+    unit = models.CharField(max_length=50, blank=True, null=True)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     total_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 

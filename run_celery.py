@@ -25,6 +25,11 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 os.chdir(str(PROJECT_DIR))
 
+# Force use of venv Python
+VENV_PYTHON = PROJECT_DIR / 'venv' / 'Scripts' / 'python.exe'
+if VENV_PYTHON.exists():
+    sys.executable = str(VENV_PYTHON)
+
 # Suppress Celery 6.0 deprecation warning about broker_connection_retry
 os.environ.setdefault('CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP', 'true')
 
@@ -46,8 +51,10 @@ def _open_log(name: str):
 
 def start_worker(queue: str, concurrency=None) -> subprocess.Popen:
     label = f'worker:{queue}'
+    # Use venv Python explicitly
+    python_exe = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
     cmd = [
-        sys.executable, '-m', 'celery', '-A', CELERY_APP, 'worker',
+        python_exe, '-m', 'celery', '-A', CELERY_APP, 'worker',
         '--pool=solo', '-Q', queue, '--loglevel=info',
     ]
     if concurrency:
@@ -64,8 +71,10 @@ def start_worker(queue: str, concurrency=None) -> subprocess.Popen:
 def start_beat() -> subprocess.Popen:
     log = _open_log('beat')
     print('  [beat]       logs/beat.log')
+    # Use venv Python explicitly
+    python_exe = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
     return subprocess.Popen(
-        [sys.executable, '-m', 'celery', '-A', CELERY_APP, 'beat',
+        [python_exe, '-m', 'celery', '-A', CELERY_APP, 'beat',
          '--loglevel=info'],
         stdout=log,
         stderr=subprocess.STDOUT,
