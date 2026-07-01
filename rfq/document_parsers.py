@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class PdfParser:
-    """Extract text from PDF files using PyPDF2."""
+    """Extract text from PDF files using PyPDF2. For scanned PDFs, AI will handle extraction."""
 
     @staticmethod
     def supported_extensions() -> List[str]:

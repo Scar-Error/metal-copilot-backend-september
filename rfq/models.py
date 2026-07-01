@@ -20,7 +20,8 @@ class Order(models.Model):
     ]
 
     EMAIL_CLASSIFICATION_CHOICES = [
-        ('rfq_po', 'RFQ / PO'),
+        ('rfq', 'RFQ'),
+        ('po', 'PO'),
         ('quotation', 'Quotation'),
         ('other', 'Other'),
     ]
@@ -79,10 +80,11 @@ class Order(models.Model):
     email_body = models.TextField(blank=True)
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='email', help_text="Source of order (email, manual, test)")
     email_message_id = models.CharField(max_length=500, blank=True, db_index=True, help_text="Unique message ID from email provider for deduplication")
-    email_classification = models.CharField(max_length=20, choices=EMAIL_CLASSIFICATION_CHOICES, default='other', help_text="AI-classified email type: RFQ/PO, Quotation, or Other")
+    email_classification = models.CharField(max_length=20, choices=EMAIL_CLASSIFICATION_CHOICES, default='other', help_text="AI-classified email type: RFQ, PO, Quotation, or Other")
 
     # Order details
     rfq_number = models.CharField(max_length=100, unique=True)
+    po_number = models.CharField(max_length=100, blank=True, null=True, help_text="Purchase Order number from customer")
     company_name = models.CharField(max_length=200)
     supplier_email = models.EmailField(blank=True, null=True, help_text="Supplier email address for sending RFQ")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
@@ -113,6 +115,8 @@ class Order(models.Model):
 
     # Business Central integration
     bc_quote_id = models.CharField(max_length=255, blank=True, help_text="Business Central sales quote ID")
+    bc_sales_order_id = models.CharField(max_length=255, blank=True, null=True, help_text="Business Central sales order ID")
+    bc_sales_order_number = models.CharField(max_length=255, blank=True, null=True, help_text="Business Central sales order number")
     bc_synced = models.BooleanField(default=False, help_text="Whether order has been synced to BC")
     bc_synced_at = models.DateTimeField(null=True, blank=True)
 

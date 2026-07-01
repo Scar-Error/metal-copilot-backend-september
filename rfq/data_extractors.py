@@ -32,31 +32,32 @@ class OpenAiExtractor:
         if not text.strip():
             return None
 
-        prompt = f"""Extract RFQ / Purchase Order data from the following text.
+        prompt = f"""Extract RFQ / Purchase Order / Quotation data from the following text.
 Return the data in JSON format with these fields:
-- company_name: Name of the company sending the RFQ/PO
+- company_name: Name of the company sending the RFQ/PO/Quotation
 - description: Overall description of what is being requested
 - delivery_date: Required delivery date (if available, use YYYY-MM-DD format)
 - items: Array of individual line items with:
-  - item_number: The numeric value from the Item # column (e.g., 1, 2, 3)
-  - description: The actual material/tools description from the Material / Tools Description column (NOT the header text)
-  - part_number: The actual part number from Supplier / Part No. column (extract only the part number after slash, e.g., "07230" from "Vector / 07230")
-  - quantity: The numeric quantity value from the Quantity column (e.g., 1, 2, 10). If quantity is not specified but item exists, assume 1.
+  - item_number: The numeric value from the Item No. / Item # column (e.g., 1, 2, 3)
+  - name: The actual item description from the Description column (NOT the header text)
+  - part_number: The part number if available (e.g., "IS-100", "CM-250")
+  - quantity: The numeric quantity value from the Qty column (e.g., 1, 2, 10). If quantity is not specified but item exists, assume 1.
   - unit: The exact unit text from the Unit column (e.g., "PC", "PCS", "pcs", "kg"). If unit is not specified but item exists, assume "PC".
+  - unit_price: The unit price if present in the text (e.g., 120.00). Extract as a number. If not present, set to null.
+  - total_price: The total price for the line item if present (e.g., 1200.00). Extract as a number. If not present, set to null.
 
 CRITICAL RULES:
 - Extract ALL items from the table - count the number of rows and ensure every single row is extracted
 - DO NOT stop after extracting the first 3-4 items - extract EVERY item in the table
 - Extract the ACTUAL VALUES from table rows, NOT the column headers
-- Do NOT extract "Item #", "Material / Tools Description", "Supplier / Part No." as values
-- Extract real data like "Vector VN5620", "CANoe PRO", "07230", "55000", etc.
-- For part numbers, extract only the code after the slash (e.g., from "Vector / 07230" extract "07230")
-- Pay SPECIAL attention to quantity values - extract the EXACT numeric value from the Quantity column (e.g., if it says "2", extract 2, not 1)
-- Pay SPECIAL attention to unit values - extract the exact values from their respective columns
+- Do NOT extract "Item No.", "Description", "Qty", "Unit Price", "Total" as values
+- Extract real data like "Industrial Sensor Model IS-100", "Control Module CM-250", "10", "120.00", etc.
+- Pay SPECIAL attention to quantity values - extract the EXACT numeric value from the Qty column (e.g., if it says "10", extract 10, not 1)
+- Pay SPECIAL attention to unit values - extract the exact values from their respective columns (e.g., "PCS")
+- For pricing: Extract unit_price and total_price ONLY if they are present in the table. If not present, set them to null.
 - If quantity or unit is empty/null for an item that exists in the table, use 1 for quantity and "PC" for unit as default
-- Do NOT extract pricing information
-- The items array MUST contain all rows from the table - if there are 8 rows, return 8 items
-- For DOCX tables, each row separated by | represents one item - extract all rows
+- The items array MUST contain all rows from the table - if there are 3 rows, return 3 items
+- For tables with | separators (markdown format), each row represents one item - extract all rows
 
 Text content:
 {text[:50000]}"""

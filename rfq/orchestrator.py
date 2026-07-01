@@ -56,19 +56,24 @@ class AiRfqDetector:
 # ---------------------------------------------------------------------------
 
 class EmailClassifier:
-    """Keyword-based three-way email classifier."""
+    """Keyword-based four-way email classifier."""
 
     RFQ_KEYWORDS = [
         'rfq', 'request for quotation', 'request for quote',
-        'purchase order', 'po number', 'po#', 'quotation request',
-        'quote request', 'request for proposal', 'rfp',
-        'request for bid', 'bid request', 'tender',
+        'quotation request', 'quote request', 'request for proposal', 'rfp',
+        'request for bid', 'bid request', 'tender', 'inquiry',
+    ]
+
+    PO_KEYWORDS = [
+        'purchase order', 'po number', 'po#', 'p.o.', 'order confirmation',
+        'we are pleased to place the following order', 'we order',
     ]
 
     QUOTATION_KEYWORDS = [
         'quotation', 'quote', 'price list', 'pricelist',
         'proposal', 'offer', 'estimate', 'pricing',
-        'price quote', 'budgetary quote',
+        'price quote', 'budgetary quote', 'thank you for your inquiry',
+        'please find our quotation',
     ]
 
     def classify(self, email: EmailMessage) -> EmailClassification:
@@ -76,9 +81,15 @@ class EmailClassifier:
         body = (email.get('body') or '').lower()
         combined = f'{subject} {body}'
 
-        if any(kw in combined for kw in self.RFQ_KEYWORDS):
-            return 'rfq_po'
+        # Check for PO first (more specific)
+        if any(kw in combined for kw in self.PO_KEYWORDS):
+            return 'po'
 
+        # Check for RFQ
+        if any(kw in combined for kw in self.RFQ_KEYWORDS):
+            return 'rfq'
+
+        # Check for Quotation
         if any(kw in combined for kw in self.QUOTATION_KEYWORDS):
             return 'quotation'
 
@@ -86,7 +97,7 @@ class EmailClassifier:
 
 
 class AiEmailClassifier:
-    """LLM-based three-way email classifier with keyword fallback."""
+    """LLM-based four-way email classifier with keyword fallback."""
 
     def classify(self, email: EmailMessage) -> EmailClassification:
         subject = (email.get('subject') or '').lower()
@@ -100,10 +111,11 @@ class AiEmailClassifier:
 
         prompt = (
             'Classify the following email as one of:\n'
-            '- RFQ_PO: A customer requesting a quotation or placing a purchase order\n'
+            '- RFQ: A customer requesting a quotation or inquiry\n'
+            '- PO: A customer placing a purchase order\n'
             '- QUOTATION: A supplier sending a price quote, proposal, or quotation\n'
             '- OTHER: Anything else\n\n'
-            'Reply with only a single word: RFQ_PO, QUOTATION, or OTHER.\n\n'
+            'Reply with only a single word: RFQ, PO, QUOTATION, or OTHER.\n\n'
             f'{text}'
         )
         try:
@@ -113,7 +125,7 @@ class AiEmailClassifier:
                     {
                         'role': 'system',
                         'content': (
-                            'You classify emails as RFQ_PO, QUOTATION, or OTHER. '
+                            'You classify emails as RFQ, PO, QUOTATION, or OTHER. '
                             'Reply with only one word.'
                         ),
                     },
@@ -123,8 +135,10 @@ class AiEmailClassifier:
                 max_tokens=10,
             )
             answer = response.choices[0].message.content.strip().upper()
-            if answer == 'RFQ_PO':
-                return 'rfq_po'
+            if answer == 'RFQ':
+                return 'rfq'
+            if answer == 'PO':
+                return 'po'
             if answer == 'QUOTATION':
                 return 'quotation'
             return 'other'
@@ -241,7 +255,8 @@ class EmailIngestionOrchestrator:
         )
 
         handler = {
-            'rfq_po': self._handle_rfq_po,
+            'rfq': self._handle_rfq_po,
+            'po': self._handle_po,
             'quotation': self._handle_quotation,
         }.get(classification)
 
@@ -257,10 +272,10 @@ class EmailIngestionOrchestrator:
     def _handle_rfq_po(self, email: EmailMessage, order: Order) -> None:
         """
         Extract description, part number, quantity, delivery date
-        from an RFQ/PO email and save to the Order + OrderItem records.
+        from an RFQ email and save to the Order + OrderItem records.
         """
         logger.info('='*80)
-        logger.info('Processing RFQ/PO email for Order %s', order.rfq_number)
+        logger.info('Processing RFQ email for Order %s', order.rfq_number)
         logger.info('Email Details:')
         logger.info('  - Subject: %s', email.get('subject', 'N/A')[:100])
         logger.info('  - Sender: %s', email.get('sender_email', 'N/A'))
@@ -335,6 +350,10 @@ class EmailIngestionOrchestrator:
         else:
             logger.info('BC sync disabled for Order %s', order.rfq_number)
 
+        # Set stage to inquiry and dispatch to suppliers
+        order.stage = 'inquiry'
+        order.save(update_fields=['stage'])
+
         if order.supplier_email or order.supplier:
             logger.info('Dispatching to supplier for Order %s', order.rfq_number)
             from rfq.tasks import dispatch_to_supplier
@@ -346,7 +365,8 @@ class EmailIngestionOrchestrator:
         """
         Handle incoming supplier quotation.
         Extract item prices from email/attachment, match to RFQ items,
-        update OrderItem records with supplier prices, and set stage to negotiation.
+        update OrderItem records with supplier prices, set stage to negotiation,
+        and send quotation email to customer.
         """
         logger.info('='*80)
         logger.info('Processing supplier quotation for Order %s', order.rfq_number)
@@ -394,7 +414,7 @@ class EmailIngestionOrchestrator:
                 order.rfq_number
             )
             return
-        
+
         logger.info('Extracted %d items from quotation', len(extracted.get('items', [])))
 
         # Match extracted items to existing OrderItems
@@ -421,7 +441,7 @@ class EmailIngestionOrchestrator:
                     break
 
             if matched_item:
-                matched_item.supplier_price = supplier_price
+                matched_item.unit_price = supplier_price
                 matched_item.save()
                 items_updated += 1
                 logger.info(
@@ -461,6 +481,139 @@ class EmailIngestionOrchestrator:
                 'Failed to sync to BC for Order %s: %s',
                 order.rfq_number, exc,
             )
+
+        # Send quotation email to customer
+        logger.info('Sending quotation email to customer for Order %s', order.rfq_number)
+        try:
+            from rfq.email_service import CustomerQuotationService
+            from microsoft_auth.graph_api import GraphEmailProvider
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            user = User.objects.filter(microsoft_token__isnull=False).first()
+            if not user:
+                logger.warning('No user with Microsoft token available for sending quotation email')
+                return
+
+            token = user.microsoft_token
+            token.refresh_if_expired()
+            provider = GraphEmailProvider(
+                access_token=token.access_token,
+                refresh_token=token.refresh_token,
+                token_expires_at=token.token_expires_at,
+                user=user,
+            )
+
+            email_service = CustomerQuotationService(email_provider=provider)
+            result = email_service.send_quotation_to_customer(order)
+
+            if result['success']:
+                logger.info('Quotation email sent successfully to customer for Order %s', order.rfq_number)
+            else:
+                logger.error('Failed to send quotation email to customer for Order %s: %s', order.rfq_number, result['message'])
+        except Exception as exc:
+            logger.error('Error sending quotation email to customer for Order %s: %s', order.rfq_number, exc)
+
+    def _handle_po(self, email: EmailMessage, order: Order) -> None:
+        """
+        Handle customer Purchase Order.
+        Extract PO data, update order with PO details, set stage to order,
+        and create Purchase Order in Business Central.
+        """
+        logger.info('='*80)
+        logger.info('Processing Purchase Order email for Order %s', order.rfq_number)
+        logger.info('Email Details:')
+        logger.info('  - Subject: %s', email.get('subject', 'N/A')[:100])
+        logger.info('  - Sender: %s', email.get('sender_email', 'N/A'))
+        logger.info('  - Has Attachments: %s', email.get('has_attachments', False))
+        logger.info('='*80)
+
+        text_to_extract = email.get('body', '')
+        logger.info('Email body length: %d chars', len(text_to_extract))
+
+        # Extract PO number from subject or body
+        po_number = None
+        import re
+        po_match = re.search(r'PO\s*[-:]?\s*([A-Z0-9-]+)', email.get('subject', '') + ' ' + email.get('body', ''), re.IGNORECASE)
+        if po_match:
+            po_number = po_match.group(1)
+            logger.info('Extracted PO Number: %s', po_number)
+
+        # Extract text from attachments if present
+        if email.get('has_attachments'):
+            attachments = self._email_provider.get_attachments(email['id'])
+            logger.info('Found %d attachments', len(attachments))
+            for att in attachments:
+                content = self._email_provider.download_attachment(
+                    email['id'], att['id'],
+                )
+                if content:
+                    saved = self._attachment_service.save_attachment(
+                        order, att, content,
+                    )
+                    if saved:
+                        file_text = extract_text(saved.file_path)
+                        if file_text:
+                            text_to_extract = file_text
+                            logger.info(
+                                'Extracted text from attachment %s for PO (length: %d chars)',
+                                att.get('name', 'unknown'), len(file_text)
+                            )
+                            break
+
+        # Extract PO data using AI or keyword extractor
+        logger.info('Starting data extraction from PO text (length: %d chars)', len(text_to_extract))
+        extracted = self._data_extractor.extract(text_to_extract)
+        if extracted is None:
+            logger.info('Primary extractor failed, trying fallback extractor')
+            extracted = self._fallback_extractor.extract(text_to_extract)
+
+        if extracted:
+            logger.info('Data extraction successful, updating order')
+            self._rfq_builder.update_from_extraction(order, extracted)
+        else:
+            logger.warning('Data extraction failed for Order %s', order.rfq_number)
+
+        # Update order with PO details
+        if po_number:
+            order.po_number = po_number
+            logger.info('Updated PO number: %s', po_number)
+
+        order.type = 'purchase_order'
+        order.stage = 'order'
+        order.status = 'processing'
+        order.save(update_fields=['type', 'stage', 'status', 'po_number'])
+        logger.info('Order %s updated to purchase_order stage', order.rfq_number)
+
+        # Create Purchase Order in Business Central
+        bc_enabled = getattr(settings, 'BC_SYNC_ENABLED', True)
+        logger.info('BC Sync Enabled: %s', bc_enabled)
+        if bc_enabled:
+            try:
+                # First, convert Sales Quote to Sales Order (for customer)
+                logger.info('Converting Sales Quote to Sales Order for Order %s', order.rfq_number)
+                from rfq.business_central import convert_quote_to_sales_order
+                so_result = convert_quote_to_sales_order(order)
+                if so_result:
+                    logger.info('Sales Order conversion complete for Order %s', order.rfq_number)
+                else:
+                    logger.warning('Sales Order conversion failed for Order %s, will still try to create Purchase Order', order.rfq_number)
+
+                # Then, create Purchase Order (for supplier)
+                logger.info('Starting BC PO creation for Order %s', order.rfq_number)
+                from rfq.business_central import create_purchase_order_in_bc
+                po_result = create_purchase_order_in_bc(order)
+                if po_result:
+                    logger.info('BC PO creation complete for Order %s', order.rfq_number)
+                else:
+                    logger.warning('BC PO creation failed for Order %s (order saved in local system)', order.rfq_number)
+            except Exception as exc:
+                logger.warning(
+                    'Failed to create BC documents for Order %s: %s (order saved in local system)',
+                    order.rfq_number, exc,
+                )
+        else:
+            logger.info('BC sync disabled for Order %s', order.rfq_number)
 
     def _handle_other(self, email: EmailMessage, order: Order) -> None:
         """Stub: handle other email types (future use)."""

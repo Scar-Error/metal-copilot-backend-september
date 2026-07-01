@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Protocol, TypedDict, runt
 # Typed dicts for standard data shapes
 # ---------------------------------------------------------------------------
 
-EmailClassification = Literal['rfq_po', 'quotation', 'other']
+EmailClassification = Literal['rfq', 'po', 'quotation', 'other']
 
 class EmailMessage(TypedDict, total=False):
     id: str
