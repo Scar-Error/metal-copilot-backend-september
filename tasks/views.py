@@ -10,6 +10,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     queryset = Task.objects.select_related('order', 'assigned_to').all()
     serializer_class = TaskSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def list(self, request, *args, **kwargs):
         try:

@@ -274,20 +274,10 @@ class EmailIngestionOrchestrator:
         Extract description, part number, quantity, delivery date
         from an RFQ email and save to the Order + OrderItem records.
         """
-        logger.info('='*80)
-        logger.info('Processing RFQ email for Order %s', order.rfq_number)
-        logger.info('Email Details:')
-        logger.info('  - Subject: %s', email.get('subject', 'N/A')[:100])
-        logger.info('  - Sender: %s', email.get('sender_email', 'N/A'))
-        logger.info('  - Has Attachments: %s', email.get('has_attachments', False))
-        logger.info('='*80)
-        
         text_to_extract = email.get('body', '')
-        logger.info('Email body length: %d chars', len(text_to_extract))
 
         if email.get('has_attachments'):
             attachments = self._email_provider.get_attachments(email['id'])
-            logger.info('Found %d attachments', len(attachments))
             for att in attachments:
                 content = self._email_provider.download_attachment(
                     email['id'], att['id'],
@@ -298,21 +288,15 @@ class EmailIngestionOrchestrator:
                     )
                     if saved:
                         file_text = extract_text(saved.file_path)
-                        # Always use attachment text if available (it likely has the full table)
                         if file_text:
                             text_to_extract = file_text
-                            logger.info('Using attachment text for extraction. Attachment: %s', att.get('name', 'unknown'))
-                            logger.info('Text length: %d chars, first 500 chars: %s', len(file_text), file_text[:500])
                             break
 
-        logger.info('Starting data extraction from text (length: %d chars)', len(text_to_extract))
         extracted = self._data_extractor.extract(text_to_extract)
         if extracted is None:
-            logger.info('Primary extractor failed, trying fallback extractor')
             extracted = self._fallback_extractor.extract(text_to_extract)
 
         if extracted:
-            logger.info('Data extraction successful, updating order')
             self._rfq_builder.update_from_extraction(order, extracted)
         else:
             logger.warning('Data extraction failed for Order %s', order.rfq_number)
@@ -321,45 +305,29 @@ class EmailIngestionOrchestrator:
             try:
                 from tasks.services import TaskService
                 TaskService.create_supplier_assignment_task(order)
-                logger.info('Created supplier assignment task for Order %s', order.rfq_number)
             except Exception as exc:
                 logger.error(
                     'Failed to create supplier-assignment task for Order %s: %s',
                     order.rfq_number, exc,
                 )
 
-        # Sync to Business Central (optional - skip if BC is not configured or unreachable)
         bc_enabled = getattr(settings, 'BC_SYNC_ENABLED', True)
-        logger.info('BC Sync Enabled: %s', bc_enabled)
         if bc_enabled:
             try:
-                logger.info('Starting BC sync for Order %s', order.rfq_number)
                 from rfq.business_central import create_quotation_in_bc
                 result = create_quotation_in_bc(order)
                 if result:
                     order.status = 'processing'
                     order.save(update_fields=['status'])
-                    logger.info('BC sync complete for Order %s', order.rfq_number)
-                else:
-                    logger.warning('BC sync failed for Order %s (order saved in local system)', order.rfq_number)
-            except Exception as exc:
-                logger.warning(
-                    'Failed to sync to BC for Order %s: %s (order saved in local system)',
-                    order.rfq_number, exc,
-                )
-        else:
-            logger.info('BC sync disabled for Order %s', order.rfq_number)
+            except Exception:
+                pass
 
-        # Set stage to inquiry and dispatch to suppliers
         order.stage = 'inquiry'
         order.save(update_fields=['stage'])
 
         if order.supplier_email or order.supplier:
-            logger.info('Dispatching to supplier for Order %s', order.rfq_number)
             from rfq.tasks import dispatch_to_supplier
             dispatch_to_supplier.delay(order.id)
-        else:
-            logger.info('No supplier assigned for Order %s, skipping dispatch', order.rfq_number)
 
     def _handle_quotation(self, email: EmailMessage, order: Order) -> None:
         """
@@ -368,21 +336,10 @@ class EmailIngestionOrchestrator:
         update OrderItem records with supplier prices, set stage to negotiation,
         and send quotation email to customer.
         """
-        logger.info('='*80)
-        logger.info('Processing supplier quotation for Order %s', order.rfq_number)
-        logger.info('Email Details:')
-        logger.info('  - Subject: %s', email.get('subject', 'N/A')[:100])
-        logger.info('  - Sender: %s', email.get('sender_email', 'N/A'))
-        logger.info('  - Has Attachments: %s', email.get('has_attachments', False))
-        logger.info('='*80)
-
         text_to_extract = email.get('body', '')
-        logger.info('Email body length: %d chars', len(text_to_extract))
 
-        # Extract text from attachments if present
         if email.get('has_attachments'):
             attachments = self._email_provider.get_attachments(email['id'])
-            logger.info('Found %d attachments', len(attachments))
             for att in attachments:
                 content = self._email_provider.download_attachment(
                     email['id'], att['id'],
@@ -395,29 +352,16 @@ class EmailIngestionOrchestrator:
                         file_text = extract_text(saved.file_path)
                         if file_text:
                             text_to_extract = file_text
-                            logger.info(
-                                'Extracted text from attachment %s for quotation (length: %d chars)',
-                                att.get('name', 'unknown'), len(file_text)
-                            )
                             break
 
-        # Extract prices using AI or keyword extractor
-        logger.info('Starting price extraction from quotation text (length: %d chars)', len(text_to_extract))
         extracted = self._data_extractor.extract(text_to_extract)
         if extracted is None:
-            logger.info('Primary extractor failed, trying fallback extractor')
             extracted = self._fallback_extractor.extract(text_to_extract)
 
         if not extracted or not extracted.get('items'):
-            logger.warning(
-                'No items extracted from quotation for Order %s',
-                order.rfq_number
-            )
+            logger.warning('No items extracted from quotation for Order %s', order.rfq_number)
             return
 
-        logger.info('Extracted %d items from quotation', len(extracted.get('items', [])))
-
-        # Match extracted items to existing OrderItems
         items_updated = 0
         for extracted_item in extracted.get('items', []):
             item_name = extracted_item.get('name', '').lower()
@@ -425,29 +369,21 @@ class EmailIngestionOrchestrator:
             supplier_price = extracted_item.get('unit_price')
 
             if not supplier_price:
-                logger.debug('Skipping item with no supplier price: %s', extracted_item.get('name', 'unknown'))
                 continue
 
-            # Try to match by item code first, then by name
             matched_item = None
             for order_item in order.items.all():
                 if item_code and order_item.item_code and item_code == order_item.item_code.lower():
                     matched_item = order_item
-                    logger.info('Matched by item code: %s', item_code)
                     break
                 if item_name and item_name in order_item.item_name.lower():
                     matched_item = order_item
-                    logger.info('Matched by item name: %s', item_name)
                     break
 
             if matched_item:
                 matched_item.unit_price = supplier_price
                 matched_item.save()
                 items_updated += 1
-                logger.info(
-                    'Updated supplier price for item %s: %s (old: %s)',
-                    matched_item.item_name, supplier_price, matched_item.unit_price
-                )
             else:
                 logger.warning(
                     'Could not match extracted item "%s" (code: %s) to any OrderItem',
@@ -457,33 +393,15 @@ class EmailIngestionOrchestrator:
         if items_updated > 0:
             order.stage = 'negotiation'
             order.save(update_fields=['stage'])
-            logger.info(
-                'Updated %d item prices from quotation for Order %s, stage set to negotiation',
-                items_updated, order.rfq_number
-            )
         else:
-            logger.warning(
-                'No items were updated from quotation for Order %s',
-                order.rfq_number
-            )
+            logger.warning('No items were updated from quotation for Order %s', order.rfq_number)
 
-        # Sync to Business Central
-        logger.info('Starting BC sync for quotation Order %s', order.rfq_number)
         try:
             from rfq.business_central import create_quotation_in_bc
-            result = create_quotation_in_bc(order)
-            if result:
-                logger.info('BC sync complete for Order %s (quotation)', order.rfq_number)
-            else:
-                logger.error('BC sync failed for Order %s (quotation)', order.rfq_number)
-        except Exception as exc:
-            logger.error(
-                'Failed to sync to BC for Order %s: %s',
-                order.rfq_number, exc,
-            )
+            create_quotation_in_bc(order)
+        except Exception:
+            pass
 
-        # Send quotation email to customer
-        logger.info('Sending quotation email to customer for Order %s', order.rfq_number)
         try:
             from rfq.email_service import CustomerQuotationService
             from microsoft_auth.graph_api import GraphEmailProvider
@@ -507,9 +425,7 @@ class EmailIngestionOrchestrator:
             email_service = CustomerQuotationService(email_provider=provider)
             result = email_service.send_quotation_to_customer(order)
 
-            if result['success']:
-                logger.info('Quotation email sent successfully to customer for Order %s', order.rfq_number)
-            else:
+            if not result['success']:
                 logger.error('Failed to send quotation email to customer for Order %s: %s', order.rfq_number, result['message'])
         except Exception as exc:
             logger.error('Error sending quotation email to customer for Order %s: %s', order.rfq_number, exc)
@@ -520,29 +436,16 @@ class EmailIngestionOrchestrator:
         Extract PO data, update order with PO details, set stage to order,
         and create Purchase Order in Business Central.
         """
-        logger.info('='*80)
-        logger.info('Processing Purchase Order email for Order %s', order.rfq_number)
-        logger.info('Email Details:')
-        logger.info('  - Subject: %s', email.get('subject', 'N/A')[:100])
-        logger.info('  - Sender: %s', email.get('sender_email', 'N/A'))
-        logger.info('  - Has Attachments: %s', email.get('has_attachments', False))
-        logger.info('='*80)
-
         text_to_extract = email.get('body', '')
-        logger.info('Email body length: %d chars', len(text_to_extract))
 
-        # Extract PO number from subject or body
         po_number = None
         import re
         po_match = re.search(r'PO\s*[-:]?\s*([A-Z0-9-]+)', email.get('subject', '') + ' ' + email.get('body', ''), re.IGNORECASE)
         if po_match:
             po_number = po_match.group(1)
-            logger.info('Extracted PO Number: %s', po_number)
 
-        # Extract text from attachments if present
         if email.get('has_attachments'):
             attachments = self._email_provider.get_attachments(email['id'])
-            logger.info('Found %d attachments', len(attachments))
             for att in attachments:
                 content = self._email_provider.download_attachment(
                     email['id'], att['id'],
@@ -555,65 +458,35 @@ class EmailIngestionOrchestrator:
                         file_text = extract_text(saved.file_path)
                         if file_text:
                             text_to_extract = file_text
-                            logger.info(
-                                'Extracted text from attachment %s for PO (length: %d chars)',
-                                att.get('name', 'unknown'), len(file_text)
-                            )
                             break
 
-        # Extract PO data using AI or keyword extractor
-        logger.info('Starting data extraction from PO text (length: %d chars)', len(text_to_extract))
         extracted = self._data_extractor.extract(text_to_extract)
         if extracted is None:
-            logger.info('Primary extractor failed, trying fallback extractor')
             extracted = self._fallback_extractor.extract(text_to_extract)
 
         if extracted:
-            logger.info('Data extraction successful, updating order')
             self._rfq_builder.update_from_extraction(order, extracted)
         else:
             logger.warning('Data extraction failed for Order %s', order.rfq_number)
 
-        # Update order with PO details
         if po_number:
             order.po_number = po_number
-            logger.info('Updated PO number: %s', po_number)
 
         order.type = 'purchase_order'
         order.stage = 'order'
         order.status = 'processing'
         order.save(update_fields=['type', 'stage', 'status', 'po_number'])
-        logger.info('Order %s updated to purchase_order stage', order.rfq_number)
 
-        # Create Purchase Order in Business Central
         bc_enabled = getattr(settings, 'BC_SYNC_ENABLED', True)
-        logger.info('BC Sync Enabled: %s', bc_enabled)
         if bc_enabled:
             try:
-                # First, convert Sales Quote to Sales Order (for customer)
-                logger.info('Converting Sales Quote to Sales Order for Order %s', order.rfq_number)
                 from rfq.business_central import convert_quote_to_sales_order
-                so_result = convert_quote_to_sales_order(order)
-                if so_result:
-                    logger.info('Sales Order conversion complete for Order %s', order.rfq_number)
-                else:
-                    logger.warning('Sales Order conversion failed for Order %s, will still try to create Purchase Order', order.rfq_number)
+                convert_quote_to_sales_order(order)
 
-                # Then, create Purchase Order (for supplier)
-                logger.info('Starting BC PO creation for Order %s', order.rfq_number)
                 from rfq.business_central import create_purchase_order_in_bc
-                po_result = create_purchase_order_in_bc(order)
-                if po_result:
-                    logger.info('BC PO creation complete for Order %s', order.rfq_number)
-                else:
-                    logger.warning('BC PO creation failed for Order %s (order saved in local system)', order.rfq_number)
-            except Exception as exc:
-                logger.warning(
-                    'Failed to create BC documents for Order %s: %s (order saved in local system)',
-                    order.rfq_number, exc,
-                )
-        else:
-            logger.info('BC sync disabled for Order %s', order.rfq_number)
+                create_purchase_order_in_bc(order)
+            except Exception:
+                pass
 
     def _handle_other(self, email: EmailMessage, order: Order) -> None:
         """Stub: handle other email types (future use)."""

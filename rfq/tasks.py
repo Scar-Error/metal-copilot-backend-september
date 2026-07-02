@@ -123,7 +123,8 @@ def process_rfq_with_ai(order_id):
         return False
 
     data = result['data']
-    order.items_description = data.get('items_description', order.items_description)
+    order.company_name = data.get('company_name', order.company_name)
+    order.items_description = data.get('description') or data.get('items_description') or order.items_description
     order.quantity = data.get('quantity', order.quantity)
     order.specifications = data.get('specifications', order.specifications)
     order.delivery_date = data.get('delivery_date', order.delivery_date)
@@ -136,9 +137,9 @@ def process_rfq_with_ai(order_id):
     for item_data in data.get('items', []):
         OrderItem.objects.create(
             order=order,
-            item_name=item_data.get('item_name', 'Unknown Item'),
-            item_code=item_data.get('item_code', ''),
-            description=item_data.get('description', ''),
+            item_name=item_data.get('name') or item_data.get('description') or item_data.get('item_name', 'Unknown Item'),
+            item_code=item_data.get('item_code') or item_data.get('part_number', ''),
+            description=item_data.get('description') or item_data.get('name', ''),
             quantity=item_data.get('quantity', 1),
             unit=item_data.get('unit', 'pcs'),
             unit_price=item_data.get('unit_price'),
@@ -324,8 +325,6 @@ def create_add_supplier_task(order):
     queue='email_polling',
 )
 def sync_with_business_central(order_id):
-    logger.info('Starting BC sync for order %d', order_id)
-
     from rfq.models import Order
     try:
         order = Order.objects.get(id=order_id)
@@ -337,7 +336,6 @@ def sync_with_business_central(order_id):
     if result:
         order.status = 'processing'
         order.save(update_fields=['status'])
-        logger.info('BC sync complete for order %d', order_id)
         return True
 
     logger.error('BC sync failed for order %d', order_id)

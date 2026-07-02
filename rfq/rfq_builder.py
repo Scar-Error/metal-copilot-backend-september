@@ -146,10 +146,12 @@ class RfqBuilder:
 
             OrderItem.objects.create(
                 order=order,
-                item_name=item_data.get('description', f'Item {idx + 1}'),
-                item_code=item_data.get('part_number', ''),
-                description=item_data.get('description', ''),
+                item_name=item_data.get('name') or item_data.get('description') or item_data.get('item_name', f'Item {idx + 1}'),
+                item_code=item_data.get('item_code') or item_data.get('part_number', ''),
+                description=item_data.get('description') or item_data.get('name', ''),
                 quantity=int(qty),
                 unit=unit,
+                unit_price=item_data.get('unit_price'),
+                total_price=item_data.get('total_price'),
                 extraction_confidence=item_data.get('confidence_score'),
             )

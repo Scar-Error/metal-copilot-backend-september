@@ -106,6 +106,8 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'DEFAULT_PAGINATION_CLASS': 'config.pagination.StandardResultsSetPagination',
+    'PAGE_SIZE': 20,
 }
 
 # ---------------------------------------------------------------------------
@@ -143,6 +145,7 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
 # Business Central
 # ---------------------------------------------------------------------------
 BC_API_URL = os.environ.get('BC_API_URL', 'https://api.businesscentral.dynamics.com/v2.0')
+BC_ODATA_URL = os.environ.get('BC_ODATA_URL', '')
 BC_COMPANY_NAME = os.environ.get('BC_COMPANY_NAME', '')
 BC_SYNC_ENABLED = os.environ.get('BC_SYNC_ENABLED', 'False').lower() == 'true'
 
@@ -168,6 +171,35 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 # Email (fallback — primary email goes through Graph API)
 # ---------------------------------------------------------------------------
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'bc_sync': {
+            'format': '%(asctime)s %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+    },
+    'handlers': {
+        'bc_sync': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'logs' / 'bc_sync.log',
+            'formatter': 'bc_sync',
+        },
+    },
+    'loggers': {
+        'bc_sync': {
+            'handlers': ['bc_sync'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
 
 # ---------------------------------------------------------------------------
 # RFQ-specific settings

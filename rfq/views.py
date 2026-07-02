@@ -327,6 +327,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 class OrderItemViewSet(viewsets.ModelViewSet):
     queryset = OrderItem.objects.all()
     serializer_class = OrderItemSerializer
+    pagination_class = None
 
     def get_queryset(self):
         qs = OrderItem.objects.all()
@@ -339,6 +340,7 @@ class OrderItemViewSet(viewsets.ModelViewSet):
 class OrderAttachmentViewSet(viewsets.ModelViewSet):
     queryset = OrderAttachment.objects.all()
     serializer_class = OrderAttachmentSerializer
+    pagination_class = None
 
     def get_queryset(self):
         qs = OrderAttachment.objects.all()
@@ -352,6 +354,7 @@ class DealViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
     serializer_class = DealSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         qs = Order.objects.all()
