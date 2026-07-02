@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Optional
 
-import openai
+import anthropic
 from django.conf import settings
 
 from rfq.interfaces import DataExtractor, ExtractedRfqData
@@ -14,19 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAiExtractor:
-    """Extract structured RFQ data via OpenAI GPT."""
+    """Extract structured RFQ data via Claude (Anthropic)."""
 
     def __init__(self) -> None:
-        self._client: Optional[openai.OpenAI] = None
-        if settings.OPENAI_API_KEY:
+        self._client: Optional[anthropic.Anthropic] = None
+        if settings.ANTHROPIC_API_KEY:
             try:
-                self._client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+                self._client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
             except Exception as exc:
-                logger.warning('OpenAI client init failed: %s', exc)
+                logger.warning('Anthropic client init failed: %s', exc)
 
     def extract(self, text: str, source_label: str = '') -> Optional[ExtractedRfqData]:
         if not self._client:
-            logger.warning('OpenAI client unavailable')
+            logger.warning('Anthropic client unavailable')
             return None
 
         if not text.strip():
@@ -65,24 +65,24 @@ Text content:
         try:
             logger.info('Starting AI extraction from %s (text length: %d chars)', source_label, len(text))
             
-            response = self._client.chat.completions.create(
-                model=getattr(settings, 'OPENAI_MODEL', 'gpt-3.5-turbo'),
+            response = self._client.messages.create(
+                model=getattr(settings, 'ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
+                max_tokens=int(getattr(settings, 'OPENAI_MAX_TOKENS', 4000)),
+                temperature=float(getattr(settings, 'OPENAI_TEMPERATURE', 0.3)),
                 messages=[
                     {
-                        'role': 'system',
+                        'role': 'user',
                         'content': (
                             'You are a data extraction assistant for RFQ documents. '
-                            'Extract structured data and return it in JSON format.'
+                            'Extract structured data and return it in JSON format.\n\n'
+                            f'{prompt}'
                         ),
                     },
-                    {'role': 'user', 'content': prompt},
                 ],
-                temperature=float(getattr(settings, 'OPENAI_TEMPERATURE', 0.3)),
-                max_tokens=int(getattr(settings, 'OPENAI_MAX_TOKENS', 4000)),
             )
 
-            raw = response.choices[0].message.content
-            logger.info('OpenAI raw response (first 3000 chars): %s', raw[:3000])
+            raw = response.content[0].text
+            logger.info('Anthropic raw response (first 3000 chars): %s', raw[:3000])
             # Strip markdown code fences if present (e.g. ```json ... ```)
             if raw.startswith('```'):
                 raw = raw.strip('`')
@@ -110,11 +110,11 @@ Text content:
             return ExtractedRfqData(**data)
 
         except json.JSONDecodeError as exc:
-            logger.error('OpenAI response was not valid JSON: %s', exc)
+            logger.error('Anthropic response was not valid JSON: %s', exc)
             logger.error('Raw response that failed to parse: %s', raw[:1000] if 'raw' in locals() else 'N/A')
             return None
         except Exception as exc:
-            logger.error('OpenAI extraction error: %s', exc)
+            logger.error('Anthropic extraction error: %s', exc)
             return None
 
 

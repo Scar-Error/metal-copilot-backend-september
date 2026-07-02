@@ -119,22 +119,22 @@ class AiEmailClassifier:
             f'{text}'
         )
         try:
-            response = extractor._client.chat.completions.create(
-                model=getattr(settings, 'OPENAI_MODEL', 'gpt-3.5-turbo'),
+            response = extractor._client.messages.create(
+                model=getattr(settings, 'ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
+                max_tokens=10,
+                temperature=0,
                 messages=[
                     {
-                        'role': 'system',
+                        'role': 'user',
                         'content': (
                             'You classify emails as RFQ, PO, QUOTATION, or OTHER. '
-                            'Reply with only one word.'
+                            'Reply with only one word.\n\n'
+                            f'{prompt}'
                         ),
                     },
-                    {'role': 'user', 'content': prompt},
                 ],
-                temperature=0,
-                max_tokens=10,
             )
-            answer = response.choices[0].message.content.strip().upper()
+            answer = response.content[0].text.strip().upper()
             if answer == 'RFQ':
                 return 'rfq'
             if answer == 'PO':
