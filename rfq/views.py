@@ -121,6 +121,23 @@ class OrderViewSet(viewsets.ModelViewSet):
             'suppliers': suppliers_data,
         })
 
+    @action(detail=False, methods=['post'])
+    def bulk_delete(self, request):
+        """Bulk delete multiple RFQs by IDs."""
+        ids = request.data.get('ids', [])
+        if not ids:
+            return Response(
+                {'error': 'No IDs provided'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        deleted_count = Order.objects.filter(id__in=ids).delete()[0]
+
+        return Response({
+            'message': f'{deleted_count} RFQ(s) deleted successfully',
+            'deleted_count': deleted_count,
+        })
+
     @action(detail=True, methods=['post'])
     def review(self, request, pk=None):
         order = self.get_object()

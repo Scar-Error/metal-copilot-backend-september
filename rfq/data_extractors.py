@@ -24,7 +24,7 @@ class OpenAiExtractor:
             except Exception as exc:
                 logger.warning('Anthropic client init failed: %s', exc)
 
-    def extract(self, text: str, source_label: str = '') -> Optional[ExtractedRfqData]:
+    def extract(self, text: str, source_label: str = '', is_quotation: bool = False) -> Optional[ExtractedRfqData]:
         if not self._client:
             logger.warning('Anthropic client unavailable')
             return None
@@ -63,6 +63,10 @@ Text content:
 {text[:50000]}"""
 
         try:
+            if is_quotation:
+                logger.info('=== QUOTATION EMAIL PROCESSING ===')
+            else:
+                logger.info('=== RFQ EMAIL PROCESSING ===')
             logger.info('Starting AI extraction from %s (text length: %d chars)', source_label, len(text))
             
             response = self._client.messages.create(
@@ -99,11 +103,25 @@ Text content:
             
             # Log each item extracted
             for idx, item in enumerate(data.get('items', []), 1):
-                logger.info('  - Item %d: part_number=%s, description=%s, quantity=%s, unit=%s',
-                           idx, item.get('part_number', 'N/A'),
-                           item.get('description', 'N/A')[:50] if item.get('description') else 'N/A',
-                           item.get('quantity', 'N/A'),
-                           item.get('unit', 'N/A'))
+                # Handle multiple possible field names from AI response
+                item_name = item.get('name') or item.get('description') or item.get('item_name') or item.get('item_description') or 'N/A'
+                # Always log unit_price if present (for debugging quotation classification issues)
+                unit_price = item.get('unit_price')
+                if unit_price:
+                    logger.info('  - Item %d: part_number=%s, name=%s, quantity=%s, unit=%s, unit_price=%s',
+                               idx, item.get('part_number', 'N/A'),
+                               item_name[:50] if item_name and item_name != 'N/A' else 'N/A',
+                               item.get('quantity', 'N/A'),
+                               item.get('unit', 'N/A'),
+                               unit_price)
+                else:
+                    logger.info('  - Item %d: part_number=%s, name=%s, quantity=%s, unit=%s',
+                               idx, item.get('part_number', 'N/A'),
+                               item_name[:50] if item_name and item_name != 'N/A' else 'N/A',
+                               item.get('quantity', 'N/A'),
+                               item.get('unit', 'N/A'))
+                # Debug: log all item fields to see what AI returned
+                logger.debug('  - Item %d all fields: %s', idx, item)
             
             data['confidence_score'] = 0.85
             logger.info('AI extraction completed successfully with confidence score: 0.85')
@@ -121,11 +139,15 @@ Text content:
 class KeywordExtractor:
     """Fallback keyword-based extraction when AI is unavailable."""
 
-    def extract(self, text: str, source_label: str = '') -> Optional[ExtractedRfqData]:
+    def extract(self, text: str, source_label: str = '', is_quotation: bool = False) -> Optional[ExtractedRfqData]:
         if not text.strip():
             logger.warning('Keyword extraction: Empty text provided for %s', source_label)
             return None
 
+        if is_quotation:
+            logger.info('=== QUOTATION EMAIL PROCESSING ===')
+        else:
+            logger.info('=== RFQ EMAIL PROCESSING ===')
         logger.info('Starting keyword extraction from %s (text length: %d chars)', source_label, len(text))
 
         company = self._first_match(text, [
@@ -183,11 +205,21 @@ class KeywordExtractor:
         logger.info('  - Number of Items Extracted: %d', len(items))
         
         for idx, item in enumerate(items, 1):
-            logger.info('  - Item %d: part_number=%s, description=%s, quantity=%s, unit=%s',
-                       idx, item.get('part_number', 'N/A'),
-                       item.get('description', 'N/A')[:50] if item.get('description') else 'N/A',
-                       item.get('quantity', 'N/A'),
-                       item.get('unit', 'N/A'))
+            # Always log unit_price if present (for debugging quotation classification issues)
+            unit_price = item.get('unit_price')
+            if unit_price:
+                logger.info('  - Item %d: part_number=%s, name=%s, quantity=%s, unit=%s, unit_price=%s',
+                           idx, item.get('part_number', 'N/A'),
+                           item.get('name', 'N/A')[:50] if item.get('name') else 'N/A',
+                           item.get('quantity', 'N/A'),
+                           item.get('unit', 'N/A'),
+                           unit_price)
+            else:
+                logger.info('  - Item %d: part_number=%s, name=%s, quantity=%s, unit=%s',
+                           idx, item.get('part_number', 'N/A'),
+                           item.get('name', 'N/A')[:50] if item.get('name') else 'N/A',
+                           item.get('quantity', 'N/A'),
+                           item.get('unit', 'N/A'))
         
         logger.info('Keyword extraction completed with confidence score: 0.5')
 

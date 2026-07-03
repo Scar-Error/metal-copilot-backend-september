@@ -107,6 +107,11 @@ def process_rfq_with_ai(order_id):
         logger.error('Order %d not found', order_id)
         return False
 
+    # Skip if already AI processed to prevent duplicate extraction
+    if order.ai_processed:
+        logger.info('Order %d already AI processed, skipping duplicate extraction', order_id)
+        return True
+
     if not order.attachment_path:
         logger.warning('No attachment for order %d', order_id)
         return False

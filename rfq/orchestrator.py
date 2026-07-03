@@ -85,36 +85,134 @@ class EmailClassifier:
         if any(kw in combined for kw in self.PO_KEYWORDS):
             return 'po'
 
+        # Check for Quotation BEFORE RFQ (supplier quotations may reference RFQ in subject)
+        if any(kw in combined for kw in self.QUOTATION_KEYWORDS):
+            return 'quotation'
+
         # Check for RFQ
         if any(kw in combined for kw in self.RFQ_KEYWORDS):
             return 'rfq'
-
-        # Check for Quotation
-        if any(kw in combined for kw in self.QUOTATION_KEYWORDS):
-            return 'quotation'
 
         return 'other'
 
 
 class AiEmailClassifier:
-    """LLM-based four-way email classifier with keyword fallback."""
+    """LLM-based four-way email classifier with keyword fallback and hybrid signals."""
 
     def classify(self, email: EmailMessage) -> EmailClassification:
         subject = (email.get('subject') or '').lower()
-        body = (email.get('body') or '').lower()[:2000]
-        text = f'Subject: {subject}\n\nBody: {body}'
+        body = (email.get('body') or '').lower()
+        full_body = body[:5000]  # Use more body for signal detection
+        
+        # If email has attachments, assume it's a quotation (suppliers send quotations with attachments)
+        # This is a heuristic since we can't extract attachment text without email_provider
+        has_attachments = email.get('has_attachments', False)
+        logger.info('Email classification - has_attachments: %s', has_attachments)
+        
+        text = f'Subject: {subject}\n\nBody: {full_body}'
+        
+        logger.info('Email classification - Subject: %s', subject[:100])
 
+        # HYBRID SIGNAL 1: Check for pricing data (strong quotation signal)
+        pricing_indicators = [
+            'unit price', 'unit_price', 'unit $', 'price:', '$', 'total price',
+            'pricing', 'price list', 'quotation', 'quote', 'proposal',
+            'thank you for your inquiry', 'please find our quotation',
+            'we are pleased to quote', 'our quotation', 'price per',
+            'cost per', 'rate', 'amount', 'invoice', 'bill'
+        ]
+        has_pricing = any(indicator in full_body for indicator in pricing_indicators)
+        
+        # Additional: Check for currency patterns (numbers with $)
+        import re
+        currency_pattern = r'\$\s*\d+\.?\d*'
+        has_currency = bool(re.search(currency_pattern, full_body))
+        
+        logger.info('Signal detection - has_pricing: %s, has_currency: %s', has_pricing, has_currency)
+        
+        # HYBRID SIGNAL 2: Check for RFQ request language (strong RFQ signal)
+        rfq_request_indicators = [
+            'request for quotation', 'please quote', 'we need a quote',
+            'please provide pricing', 'request for proposal', 'rfp',
+            'we would like to request', 'can you provide us with',
+            'we are looking for', 'please send us your quote'
+        ]
+        has_rfq_request = any(indicator in full_body for indicator in rfq_request_indicators)
+        
+        logger.info('Signal detection - has_rfq_request: %s', has_rfq_request)
+        
+        # HYBRID SIGNAL 3: Check for PO language (strong PO signal)
+        po_indicators = [
+            'purchase order', 'po number', 'we order', 'we are pleased to place',
+            'order confirmation', 'please process our order'
+        ]
+        has_po = any(indicator in full_body for indicator in po_indicators)
+        
+        logger.info('Signal detection - has_po: %s', has_po)
+        
+        # HYBRID SIGNAL 4: Check for RFQ number in subject (could be quotation referencing RFQ)
+        import re
+        rfq_number_pattern = r'[Rr][Ff][Qq][-\s]?(\d{8}[-\s]?[A-Fa-f0-9]{8}|\d{4}[-\s]?\d{3})'
+        has_rfq_number = bool(re.search(rfq_number_pattern, subject))
+        logger.info('Signal detection - has_rfq_number: %s', has_rfq_number)
+        
+        # Apply hybrid signals (override AI if strong signals present)
+        # Priority 1: RFQ number + pricing/currency → quotation referencing RFQ (strongest quotation signal)
+        if has_rfq_number and (has_pricing or has_currency):
+            logger.info('Hybrid signal: RFQ number + pricing detected, classifying as QUOTATION')
+            return 'quotation'
+        
+        # Priority 2: Attachments + RFQ number → quotation (suppliers send quotations with attachments)
+        if has_attachments and has_rfq_number:
+            logger.info('Hybrid signal: Attachments + RFQ number detected, classifying as QUOTATION')
+            return 'quotation'
+        
+        # Priority 3: Attachments + pricing → quotation
+        if has_attachments and (has_pricing or has_currency):
+            logger.info('Hybrid signal: Attachments + pricing detected, classifying as QUOTATION')
+            return 'quotation'
+        
+        # Priority 4: PO indicators (but only if no RFQ number - quotations may have "order" in body)
+        if has_po and not has_rfq_number:
+            logger.info('Hybrid signal: PO indicators detected (no RFQ number), classifying as PO')
+            return 'po'
+        
+        # Priority 5: Pricing without RFQ request → quotation
+        if has_pricing and not has_rfq_request:
+            logger.info('Hybrid signal: Pricing indicators detected without RFQ request, classifying as QUOTATION')
+            return 'quotation'
+        
+        # Priority 6: RFQ request without pricing → RFQ
+        if has_rfq_request and not has_pricing:
+            logger.info('Hybrid signal: RFQ request detected without pricing, classifying as RFQ')
+            return 'rfq'
+        
+        # Priority 7: PO indicators with RFQ number → likely quotation (supplier referencing RFQ)
+        if has_po and has_rfq_number:
+            logger.info('Hybrid signal: PO indicators + RFQ number detected, classifying as QUOTATION')
+            return 'quotation'
+
+        # If signals are mixed or unclear, use AI classifier
         from rfq.data_extractors import OpenAiExtractor
         extractor = OpenAiExtractor()
         if not extractor._client:
+            logger.info('AI classifier unavailable, using keyword classifier')
             return EmailClassifier().classify(email)
+        
+        logger.info('Using AI classifier for email classification (hybrid signals were mixed/unclear)')
 
         prompt = (
             'Classify the following email as one of:\n'
-            '- RFQ: A customer requesting a quotation or inquiry\n'
-            '- PO: A customer placing a purchase order\n'
-            '- QUOTATION: A supplier sending a price quote, proposal, or quotation\n'
+            '- RFQ: A customer REQUESTING a quotation or inquiry (asking for prices)\n'
+            '- PO: A customer placing a purchase order (confirming an order)\n'
+            '- QUOTATION: A supplier SENDING a price quote, proposal, or quotation (providing prices)\n'
             '- OTHER: Anything else\n\n'
+            'IMPORTANT DISTINCTIONS:\n'
+            '- If the email says "thank you for your inquiry" or "please find our quotation" → QUOTATION\n'
+            '- If the email contains unit prices, price tables, or pricing details → QUOTATION\n'
+            '- If the email references an RFQ number but is FROM a supplier → QUOTATION\n'
+            '- If the email asks for prices or quotes → RFQ\n'
+            '- If the email places an order → PO\n\n'
             'Reply with only a single word: RFQ, PO, QUOTATION, or OTHER.\n\n'
             f'{text}'
         )
@@ -135,12 +233,14 @@ class AiEmailClassifier:
                 ],
             )
             answer = response.content[0].text.strip().upper()
+            logger.info('AI classifier result: %s', answer)
             if answer == 'RFQ':
                 return 'rfq'
             if answer == 'PO':
                 return 'po'
             if answer == 'QUOTATION':
                 return 'quotation'
+            logger.warning('AI classifier returned unexpected result: %s, defaulting to other', answer)
             return 'other'
         except Exception as exc:
             logger.warning('AI classification failed, falling back to keywords: %s', exc)
@@ -242,7 +342,123 @@ class EmailIngestionOrchestrator:
     # Internal pipeline
     # ------------------------------------------------------------------
 
+    def _find_order_for_quotation(self, email: EmailMessage) -> Optional[Order]:
+        """
+        Extract RFQ number from quotation email subject/body and find existing order.
+        Matches patterns like: RFQ-20260703-A1B2C3D4, RFQ-2026-001, RFQ 2026-001
+        Falls back to matching by company name and recent orders.
+        """
+        import re
+        from datetime import timedelta
+        from django.utils import timezone
+        
+        subject = email.get('subject', '')
+        body = email.get('body', '')
+        sender_email = email.get('sender_email', '')
+        
+        logger.info('Searching for RFQ number in subject: %s', subject)
+        
+        # Try multiple patterns to match different RFQ number formats
+        patterns = [
+            r'(RFQ[-\s#.]?\d{8}[-\s#.]?[A-F0-9]{8})',  # RFQ-YYYYMMDD-XXXXXXXX (system format)
+            r'(RFQ[-\s#.]?\d{2,4}[-\s#.]?\d{2,4})',    # RFQ-2026-001 or RFQ-232-7556
+            r'(RFQ[-\s#.]?[A-F0-9-]+)',                 # RFQ-XXXXXXXX (fallback)
+        ]
+        
+        # First try subject
+        for pattern in patterns:
+            rfq_match = re.search(pattern, subject, re.IGNORECASE)
+            if rfq_match:
+                rfq_number = rfq_match.group(1).replace(' ', '-').upper()
+                logger.info('Extracted RFQ number from subject: %s', rfq_number)
+                try:
+                    order = Order.objects.get(rfq_number=rfq_number)
+                    logger.info('Found existing Order %s for quotation email', order.rfq_number)
+                    return order
+                except Order.DoesNotExist:
+                    logger.warning('Order %s not found for quotation email', rfq_number)
+                    # Continue to try next pattern
+                    continue
+        
+        # If not found in subject, try body
+        logger.info('RFQ number not found in subject, searching in body...')
+        for pattern in patterns:
+            rfq_match = re.search(pattern, body, re.IGNORECASE)
+            if rfq_match:
+                rfq_number = rfq_match.group(1).replace(' ', '-').upper()
+                logger.info('Extracted RFQ number from body: %s', rfq_number)
+                try:
+                    order = Order.objects.get(rfq_number=rfq_number)
+                    logger.info('Found existing Order %s for quotation email', order.rfq_number)
+                    return order
+                except Order.DoesNotExist:
+                    logger.warning('Order %s not found for quotation email', rfq_number)
+                    continue
+        
+        # Fallback: Try matching by sender email and recent orders (last 30 days)
+        logger.info('RFQ number not found in subject or body, trying fallback matching')
+        thirty_days_ago = timezone.now() - timedelta(days=30)
+
+        # Try matching by company_name first (quotation sender = supplier, RFQ sender = customer)
+        company_match = re.search(r'company[:\s]+([^\n,;]+)', body[:500], re.IGNORECASE)
+        company_name = company_match.group(1).strip() if company_match else ''
+        if company_name and len(company_name) > 2:
+            recent_by_company = Order.objects.filter(
+                company_name__icontains=company_name,
+                created_at__gte=thirty_days_ago,
+            ).order_by('-created_at')
+            if recent_by_company.exists():
+                order = recent_by_company.first()
+                logger.info('Found recent Order %s matching company "%s" (fallback)', order.rfq_number, company_name)
+                return order
+
+        # Then try by sender email
+        recent_orders = Order.objects.filter(
+            email_sender=sender_email,
+            created_at__gte=thirty_days_ago,
+        ).order_by('-created_at')
+        
+        if recent_orders.exists():
+            order = recent_orders.first()
+            logger.info('Found recent Order %s from sender %s (fallback match)', order.rfq_number, sender_email)
+            return order
+
+        # Finally try by email_subject containing existing rfq_number
+        for o in Order.objects.filter(created_at__gte=thirty_days_ago).only('rfq_number', 'email_subject'):
+            if o.rfq_number and o.rfq_number.replace('RFQ-', '') in subject:
+                logger.info('Found Order %s by rfq_number in subject (fallback)', o.rfq_number)
+                return o
+        
+        logger.warning('No matching order found for quotation email')
+        return None
+
     def _process_one_email(self, email: EmailMessage, classification: EmailClassification) -> Optional[Order]:
+        # Skip processing for OTHER classification (bounce notifications, spam, etc.)
+        if classification == 'other':
+            logger.info('Email classified as OTHER, skipping order creation')
+            return None
+        
+        # Skip bounce/delivery failure notifications
+        subject = (email.get('subject') or '').lower()
+        body = (email.get('body') or '').lower()
+        bounce_indicators = [
+            'delivery failure', 'delivery status notification', 'undelivered',
+            'bounce', 'returned', 'failed', 'not delivered', 'delivery failed'
+        ]
+        if any(indicator in subject or indicator in body for indicator in bounce_indicators):
+            logger.info('Email appears to be a bounce/delivery failure notification, skipping')
+            return None
+        
+        # For quotations, try to find existing order by RFQ number in subject
+        if classification == 'quotation':
+            order = self._find_order_for_quotation(email)
+            if order:
+                logger.info('Processing quotation for existing Order %s', order.rfq_number)
+                self._handle_quotation(email, order)
+                return order
+            else:
+                logger.info('No existing Order found for quotation, creating new order')
+
         order = self._rfq_builder.create_from_email(
             subject=email.get('subject', ''),
             sender_email=email.get('sender_email', ''),
@@ -354,25 +570,26 @@ class EmailIngestionOrchestrator:
                             text_to_extract = file_text
                             break
 
-        extracted = self._data_extractor.extract(text_to_extract)
+        extracted = self._data_extractor.extract(text_to_extract, is_quotation=True)
         if extracted is None:
-            extracted = self._fallback_extractor.extract(text_to_extract)
+            extracted = self._fallback_extractor.extract(text_to_extract, is_quotation=True)
 
         if not extracted or not extracted.get('items'):
             logger.warning('No items extracted from quotation for Order %s', order.rfq_number)
             return
 
+        existing_items = list(order.items.all())
         items_updated = 0
+        items_created = 0
+
         for extracted_item in extracted.get('items', []):
             item_name = extracted_item.get('name', '').lower()
             item_code = extracted_item.get('part_number', '').lower()
             supplier_price = extracted_item.get('unit_price')
-
-            if not supplier_price:
-                continue
+            supplier_total = extracted_item.get('total_price')
 
             matched_item = None
-            for order_item in order.items.all():
+            for order_item in existing_items:
                 if item_code and order_item.item_code and item_code == order_item.item_code.lower():
                     matched_item = order_item
                     break
@@ -381,20 +598,36 @@ class EmailIngestionOrchestrator:
                     break
 
             if matched_item:
-                matched_item.unit_price = supplier_price
+                if supplier_price is not None:
+                    matched_item.unit_price = supplier_price
+                if supplier_total is not None:
+                    matched_item.total_price = supplier_total
                 matched_item.save()
                 items_updated += 1
             else:
-                logger.warning(
-                    'Could not match extracted item "%s" (code: %s) to any OrderItem',
-                    extracted_item.get('name', 'unknown'), extracted_item.get('part_number', 'N/A')
+                # Create a new item on the order from the extracted quotation data
+                from rfq.models import OrderItem
+                OrderItem.objects.create(
+                    order=order,
+                    item_name=extracted_item.get('name') or extracted_item.get('description', 'Unknown Item'),
+                    item_code=extracted_item.get('part_number', ''),
+                    description=extracted_item.get('description') or extracted_item.get('name', ''),
+                    quantity=extracted_item.get('quantity', 1),
+                    unit=extracted_item.get('unit', 'PC'),
+                    unit_price=supplier_price,
+                    total_price=supplier_total,
                 )
+                items_created += 1
 
-        if items_updated > 0:
+        if items_updated > 0 or items_created > 0:
             order.stage = 'negotiation'
             order.save(update_fields=['stage'])
+            logger.info(
+                'RFQ %s UPDATED: %d items updated, %d items created from quotation',
+                order.rfq_number, items_updated, items_created
+            )
         else:
-            logger.warning('No items were updated from quotation for Order %s', order.rfq_number)
+            logger.warning('No items were updated/created from quotation for Order %s', order.rfq_number)
 
         try:
             from rfq.business_central import create_quotation_in_bc
@@ -406,6 +639,11 @@ class EmailIngestionOrchestrator:
             from rfq.email_service import CustomerQuotationService
             from microsoft_auth.graph_api import GraphEmailProvider
             from django.contrib.auth import get_user_model
+
+            # Check if quotation email has already been sent to avoid duplicates
+            if order.quotation_email_sent:
+                logger.info('Quotation email already sent for Order %s, skipping', order.rfq_number)
+                return
 
             User = get_user_model()
             user = User.objects.filter(microsoft_token__isnull=False).first()
@@ -425,7 +663,11 @@ class EmailIngestionOrchestrator:
             email_service = CustomerQuotationService(email_provider=provider)
             result = email_service.send_quotation_to_customer(order)
 
-            if not result['success']:
+            if result['success']:
+                order.quotation_email_sent = True
+                order.save(update_fields=['quotation_email_sent'])
+                logger.info('Quotation email sent successfully for Order %s', order.rfq_number)
+            else:
                 logger.error('Failed to send quotation email to customer for Order %s: %s', order.rfq_number, result['message'])
         except Exception as exc:
             logger.error('Error sending quotation email to customer for Order %s: %s', order.rfq_number, exc)
