@@ -100,6 +100,47 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Response(dashboard_stats())
 
     @action(detail=False, methods=['get'])
+    def purchase_orders(self, request):
+        """Get list of purchase orders (type=purchase_order)."""
+        qs = Order.objects.filter(type='purchase_order')
+        
+        # Apply same filters as main queryset
+        status_param = request.query_params.get('status')
+        if status_param:
+            qs = qs.filter(status=status_param)
+
+        stage_param = request.query_params.get('stage')
+        if stage_param:
+            qs = qs.filter(stage=stage_param)
+
+        priority_param = request.query_params.get('priority')
+        if priority_param:
+            qs = qs.filter(priority=priority_param)
+
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        if start_date:
+            qs = qs.filter(email_received_at__gte=start_date)
+        if end_date:
+            qs = qs.filter(email_received_at__lte=end_date)
+
+        search = request.query_params.get('search')
+        if search:
+            qs = qs.filter(
+                Q(company_name__icontains=search)
+                | Q(rfq_number__icontains=search)
+                | Q(email_subject__icontains=search)
+            )
+
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = OrderListSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = OrderListSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
     def available_suppliers(self, request):
         """Get list of all suppliers for dropdown selection."""
         from contacts.models import Contact

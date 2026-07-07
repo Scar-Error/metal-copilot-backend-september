@@ -121,7 +121,8 @@ class AiEmailClassifier:
             'we are pleased to quote', 'our quotation', 'price per',
             'cost per', 'rate', 'amount', 'invoice', 'bill'
         ]
-        has_pricing = any(indicator in full_body for indicator in pricing_indicators)
+        # Check case-insensitive for pricing indicators
+        has_pricing = any(indicator in full_body.lower() for indicator in pricing_indicators)
         
         # Additional: Check for currency patterns (numbers with $)
         import re
@@ -137,18 +138,64 @@ class AiEmailClassifier:
             'we would like to request', 'can you provide us with',
             'we are looking for', 'please send us your quote'
         ]
-        has_rfq_request = any(indicator in full_body for indicator in rfq_request_indicators)
+        # Check case-insensitive for RFQ request indicators
+        has_rfq_request = any(indicator in full_body.lower() for indicator in rfq_request_indicators)
         
         logger.info('Signal detection - has_rfq_request: %s', has_rfq_request)
         
         # HYBRID SIGNAL 3: Check for PO language (strong PO signal)
         po_indicators = [
             'purchase order', 'po number', 'we order', 'we are pleased to place',
-            'order confirmation', 'please process our order'
+            'order confirmation', 'please process our order', 'po#', 'po #',
+            'p.o.', 'p.o', 'purchase order #', 'order #', 'customer order',
+            'our order', 'this order', 'confirming order', 'order placed',
+            'we confirm', 'we place order', 'we would like to order', 'we would like to place',
+            'we hereby order', 'we hereby confirm', 'confirming our order', 'our purchase order',
+            'customer po', 'client order', 'client purchase order'
         ]
-        has_po = any(indicator in full_body for indicator in po_indicators)
+        # Check both subject and body for PO indicators (case-insensitive)
+        has_po = any(indicator in subject.lower() or indicator in full_body.lower() for indicator in po_indicators)
         
-        logger.info('Signal detection - has_po: %s', has_po)
+        # HYBRID SIGNAL 3.5: Check for quotation-specific phrases (should override PO)
+        quotation_indicators = [
+            'thank you for your inquiry', 'please find our quotation', 'we are pleased to quote',
+            'our quotation', 'quotation for', 'price quote', 'quotation attached',
+            'attached quotation', 'find attached', 'quotation reference', 'quotation no',
+            'find attached our quotation', 'attached is our quotation', 'here is our quotation',
+            'please find attached', 'attached please find', 'quotation follows', 'quotation below',
+            'our price quote', 'our proposal', 'our offer', 'quotation regarding',
+            'quotation subject', 'quotation ref', 'quotation number', 'quote for',
+            'quote regarding', 'quote reference', 'quote number', 'price quotation',
+            'sales quotation', 'formal quotation', 'pro forma quotation'
+        ]
+        # Check case-insensitive for quotation phrases
+        has_quotation_phrase = any(indicator in full_body.lower() for indicator in quotation_indicators)
+        
+        logger.info('Signal detection - has_po: %s, has_quotation_phrase: %s', has_po, has_quotation_phrase)
+
+        # STRONG PO OVERRIDE: If a PO number or explicit PO phrase is present,
+        # force PO classification before expensive AI calls or scoring.
+        po_number_pattern = r'\bPO\s*[-:]?\s*[A-Z0-9-]+\b'
+        try:
+            import re as _re
+            # Check subject first - if subject contains "purchase order" or "po", force PO
+            subject_lower = subject.lower()
+            if 'purchase order' in subject_lower or 'po ' in subject_lower or subject_lower.startswith('po'):
+                logger.info('Subject contains PO indicator, forcing PO classification')
+                return 'po'
+            # Check for PO number pattern
+            if _re.search(po_number_pattern, subject + ' ' + full_body, _re.IGNORECASE):
+                logger.info('Strong PO pattern detected in email, overriding to PO')
+                return 'po'
+            strong_po_phrases = [
+                'we order', 'we are pleased to place', 'please process our order',
+                'order confirmation', 'confirming our order', 'we confirm'
+            ]
+            if any(phrase in subject_lower or phrase in full_body.lower() for phrase in strong_po_phrases):
+                logger.info('Strong PO phrase detected in email, overriding to PO')
+                return 'po'
+        except Exception:
+            logger.exception('Error during PO override detection; continuing with normal classification')
         
         # HYBRID SIGNAL 4: Check for RFQ number in subject (could be quotation referencing RFQ)
         import re
@@ -156,65 +203,135 @@ class AiEmailClassifier:
         has_rfq_number = bool(re.search(rfq_number_pattern, subject))
         logger.info('Signal detection - has_rfq_number: %s', has_rfq_number)
         
-        # Apply hybrid signals (override AI if strong signals present)
-        # Priority 1: RFQ number + pricing/currency → quotation referencing RFQ (strongest quotation signal)
+        # SCORING SYSTEM: Calculate scores for each type to prevent mixing
+        rfq_score = 0
+        quotation_score = 0
+        po_score = 0
+        
+        # RFQ signals
+        if has_rfq_request:
+            rfq_score += 5
+        if has_rfq_number and not (has_pricing or has_currency):
+            rfq_score += 3
+        
+        # Quotation signals (highest priority to prevent PO confusion)
+        if has_quotation_phrase:
+            quotation_score += 10  # Strong quotation signal
+        if has_pricing:
+            quotation_score += 4
+        if has_currency:
+            quotation_score += 3
+        if has_attachments:
+            quotation_score += 2
         if has_rfq_number and (has_pricing or has_currency):
-            logger.info('Hybrid signal: RFQ number + pricing detected, classifying as QUOTATION')
-            return 'quotation'
+            quotation_score += 5  # Quotation referencing RFQ
         
-        # Priority 2: Attachments + RFQ number → quotation (suppliers send quotations with attachments)
-        if has_attachments and has_rfq_number:
-            logger.info('Hybrid signal: Attachments + RFQ number detected, classifying as QUOTATION')
-            return 'quotation'
+        # PO signals
+        if has_po:
+            po_score += 8
+            # If PO has RFQ number, it's even stronger (PO referencing RFQ)
+            if has_rfq_number:
+                po_score += 5
+        # Reduce PO score if quotation signals present (prevent mixing)
+        if has_quotation_phrase and has_po:
+            po_score -= 5  # Quotation overrides PO
         
-        # Priority 3: Attachments + pricing → quotation
-        if has_attachments and (has_pricing or has_currency):
-            logger.info('Hybrid signal: Attachments + pricing detected, classifying as QUOTATION')
-            return 'quotation'
+        logger.info('Scoring - RFQ: %d, QUOTATION: %d, PO: %d', rfq_score, quotation_score, po_score)
         
-        # Priority 4: PO indicators (but only if no RFQ number - quotations may have "order" in body)
-        if has_po and not has_rfq_number:
-            logger.info('Hybrid signal: PO indicators detected (no RFQ number), classifying as PO')
-            return 'po'
-        
-        # Priority 5: Pricing without RFQ request → quotation
-        if has_pricing and not has_rfq_request:
-            logger.info('Hybrid signal: Pricing indicators detected without RFQ request, classifying as QUOTATION')
-            return 'quotation'
-        
-        # Priority 6: RFQ request without pricing → RFQ
-        if has_rfq_request and not has_pricing:
-            logger.info('Hybrid signal: RFQ request detected without pricing, classifying as RFQ')
-            return 'rfq'
-        
-        # Priority 7: PO indicators with RFQ number → likely quotation (supplier referencing RFQ)
-        if has_po and has_rfq_number:
-            logger.info('Hybrid signal: PO indicators + RFQ number detected, classifying as QUOTATION')
-            return 'quotation'
-
-        # If signals are mixed or unclear, use AI classifier
+        # PRIMARY: Use AI classifier for all classifications
         from rfq.data_extractors import OpenAiExtractor
         extractor = OpenAiExtractor()
         if not extractor._client:
-            logger.info('AI classifier unavailable, using keyword classifier')
+            logger.info('AI classifier unavailable, using scoring-based hybrid signals')
+            # Use scoring to determine winner
+            max_score = max(rfq_score, quotation_score, po_score)
+            if max_score == 0:
+                logger.info('No strong signals, using keyword classifier')
+                return EmailClassifier().classify(email)
+            if quotation_score >= max_score and quotation_score > 0:
+                logger.info('Scoring winner: QUOTATION (score=%d)', quotation_score)
+                return 'quotation'
+            if po_score >= max_score and po_score > 0:
+                logger.info('Scoring winner: PO (score=%d)', po_score)
+                return 'po'
+            if rfq_score >= max_score and rfq_score > 0:
+                logger.info('Scoring winner: RFQ (score=%d)', rfq_score)
+                return 'rfq'
             return EmailClassifier().classify(email)
         
-        logger.info('Using AI classifier for email classification (hybrid signals were mixed/unclear)')
+        logger.info('Using AI classifier as primary method for email classification')
 
         prompt = (
-            'Classify the following email as one of:\n'
-            '- RFQ: A customer REQUESTING a quotation or inquiry (asking for prices)\n'
-            '- PO: A customer placing a purchase order (confirming an order)\n'
-            '- QUOTATION: A supplier SENDING a price quote, proposal, or quotation (providing prices)\n'
-            '- OTHER: Anything else\n\n'
-            'IMPORTANT DISTINCTIONS:\n'
-            '- If the email says "thank you for your inquiry" or "please find our quotation" → QUOTATION\n'
-            '- If the email contains unit prices, price tables, or pricing details → QUOTATION\n'
-            '- If the email references an RFQ number but is FROM a supplier → QUOTATION\n'
-            '- If the email asks for prices or quotes → RFQ\n'
-            '- If the email places an order → PO\n\n'
-            'Reply with only a single word: RFQ, PO, QUOTATION, or OTHER.\n\n'
-            f'{text}'
+            'You are an expert procurement document classifier.\n\n'
+            'Your task is to classify an email and its attachments into exactly ONE of these document types:\n\n'
+            '1. RFQ (Request for Quotation)\n'
+            '2. QUOTATION (Supplier Quote / Proposal)\n'
+            '3. PURCHASE_ORDER (PO)\n'
+            '4. OTHER\n\n'
+            'IMPORTANT:\n'
+            'Do not rely on the email subject alone.\n'
+            'Do not rely on filenames alone.\n'
+            'Read the full email body and all attachment text carefully.\n'
+            'Case does not matter - CUSTOMERS may write in ANY case (CAPITAL, small, mixed).\n\n'
+            'Analyze:\n'
+            '- Who is requesting something?\n'
+            '- Who is responding?\n'
+            '- Whether pricing exists.\n'
+            '- Whether an order is being placed.\n'
+            '- Whether products are being requested for quotation.\n\n'
+            'Classification Rules:\n\n'
+            'RFQ:\n'
+            '- Customer is requesting prices, availability, lead times, or quotations.\n'
+            '- Contains phrases like:\n'
+            '  - request for quotation\n'
+            '  - RFQ\n'
+            '  - please quote\n'
+            '  - provide your quotation\n'
+            '  - looking for pricing\n'
+            '  - inquiry\n'
+            '- Usually contains item list and quantities.\n'
+            '- Usually DOES NOT contain accepted pricing or order confirmation.\n\n'
+            'QUOTATION:\n'
+            '- Supplier is responding with prices.\n'
+            '- Contains unit prices, totals, taxes, validity, payment terms, lead time.\n'
+            '- Contains phrases like:\n'
+            '  - quotation\n'
+            '  - quote\n'
+            '  - quoted price\n'
+            '  - validity\n'
+            '  - payment terms\n'
+            '  - lead time\n'
+            '  - thank you for your inquiry\n'
+            '  - please find our quotation\n'
+            '  - we are pleased to quote\n'
+            '- Supplier is offering pricing.\n'
+            '- No order is being placed.\n'
+            '- Subject often contains "Quotation for RFQ-..." or similar.\n\n'
+            'PURCHASE_ORDER:\n'
+            '- Buyer is confirming purchase.\n'
+            '- Contains PO Number, Purchase Order Number, Order Confirmation.\n'
+            '- Buyer is instructing supplier to supply goods.\n'
+            '- Contains phrases like:\n'
+            '  - purchase order\n'
+            '  - PO\n'
+            '  - please supply\n'
+            '  - order confirmation\n'
+            '  - proceed with order\n'
+            '  - we are pleased to place the following order\n'
+            '- Prices may appear, but the key intent is placing an order.\n\n'
+            'Priority Rules:\n'
+            '- If a document asks for pricing → RFQ.\n'
+            '- If a document provides pricing → QUOTATION.\n'
+            '- If a document confirms buying goods → PURCHASE_ORDER.\n'
+            '- Purchase Order has higher priority than Quotation.\n'
+            '- Quotation has higher priority than RFQ.\n\n'
+            'EXAMPLES:\n'
+            'Email with "Quotation for RFQ-123" and pricing table → QUOTATION\n'
+            'Email with "Thank you for your inquiry" and prices → QUOTATION\n'
+            'Email with "We order" or "Please process our order" → PURCHASE_ORDER\n'
+            'Email with "Please quote" or "Request for quotation" → RFQ\n\n'
+            'Reply with only ONE word: RFQ, QUOTATION, PURCHASE_ORDER, or OTHER.\n\n'
+            f'Email content:\n{text}'
         )
         try:
             response = extractor._client.messages.create(
@@ -224,26 +341,78 @@ class AiEmailClassifier:
                 messages=[
                     {
                         'role': 'user',
-                        'content': (
-                            'You classify emails as RFQ, PO, QUOTATION, or OTHER. '
-                            'Reply with only one word.\n\n'
-                            f'{prompt}'
-                        ),
+                        'content': prompt,
                     },
                 ],
             )
-            answer = response.content[0].text.strip().upper()
+            answer = response.content[0].text.strip()
             logger.info('AI classifier result: %s', answer)
+            
+            # Strip markdown code blocks if present
+            if answer.startswith('```json'):
+                answer = answer[7:]  # Remove ```json
+            if answer.startswith('```'):
+                answer = answer[3:]  # Remove ```
+            if answer.endswith('```'):
+                answer = answer[:-3]  # Remove trailing ```
+            answer = answer.strip().upper()
+            
+            # Try to parse as JSON first (in case AI ignores instruction)
+            import json
+            try:
+                result = json.loads(answer.lower())
+                document_type = result.get('document_type', '').upper()
+                if document_type == 'RFQ':
+                    return 'rfq'
+                if document_type == 'PURCHASE_ORDER':
+                    return 'po'
+                if document_type == 'QUOTATION':
+                    return 'quotation'
+                if document_type == 'UNKNOWN' or document_type == 'OTHER':
+                    return 'other'
+            except json.JSONDecodeError:
+                # Not JSON, treat as plain text
+                pass
+            
+            # Plain text response
             if answer == 'RFQ':
                 return 'rfq'
-            if answer == 'PO':
+            if answer == 'PURCHASE_ORDER':
                 return 'po'
             if answer == 'QUOTATION':
                 return 'quotation'
-            logger.warning('AI classifier returned unexpected result: %s, defaulting to other', answer)
-            return 'other'
+            if answer == 'OTHER':
+                return 'other'
+            logger.warning('AI classifier returned unexpected result: %s, using scoring fallback', answer)
+            # Use scoring system as fallback
+            max_score = max(rfq_score, quotation_score, po_score)
+            if max_score == 0:
+                return EmailClassifier().classify(email)
+            if quotation_score >= max_score and quotation_score > 0:
+                logger.info('Scoring fallback winner: QUOTATION (score=%d)', quotation_score)
+                return 'quotation'
+            if po_score >= max_score and po_score > 0:
+                logger.info('Scoring fallback winner: PO (score=%d)', po_score)
+                return 'po'
+            if rfq_score >= max_score and rfq_score > 0:
+                logger.info('Scoring fallback winner: RFQ (score=%d)', rfq_score)
+                return 'rfq'
+            return EmailClassifier().classify(email)
         except Exception as exc:
-            logger.warning('AI classification failed, falling back to keywords: %s', exc)
+            logger.warning('AI classification failed, using scoring fallback: %s', exc)
+            # Use scoring system as fallback
+            max_score = max(rfq_score, quotation_score, po_score)
+            if max_score == 0:
+                return EmailClassifier().classify(email)
+            if quotation_score >= max_score and quotation_score > 0:
+                logger.info('Scoring fallback winner: QUOTATION (score=%d)', quotation_score)
+                return 'quotation'
+            if po_score >= max_score and po_score > 0:
+                logger.info('Scoring fallback winner: PO (score=%d)', po_score)
+                return 'po'
+            if rfq_score >= max_score and rfq_score > 0:
+                logger.info('Scoring fallback winner: RFQ (score=%d)', rfq_score)
+                return 'rfq'
             return EmailClassifier().classify(email)
 
 
@@ -285,26 +454,37 @@ class EmailIngestionOrchestrator:
         Check the inbox for new emails, classify and process each one.
         Returns a summary dict.
         """
+        # Fetch emails from last 1 day - category filter prevents reprocessing
         emails = self._email_provider.fetch_emails(
             limit=50,
-            days_back=days_back,
+            days_back=1,  # 1 day
         )
+        if emails:
+            logger.info('Discovered %d new email(s)', len(emails))
+            for e in emails:
+                try:
+                    logger.info(
+                        'Email discovered - id=%s subject=%s from=%s received_at=%s',
+                        e.get('id', ''),
+                        (e.get('subject') or '')[:200],
+                        e.get('sender_email', ''),
+                        e.get('received_at', ''),
+                    )
+                except Exception:
+                    logger.exception('Failed to log discovered email')
         if not emails:
             logger.info('No emails found')
             return {'success': True, 'processed': 0, 'errors': []}
 
         processed = 0
         errors: List[str] = []
-        existing_ids = set(
-            Order.objects.exclude(email_message_id='')
-            .values_list('email_message_id', flat=True)
-        )
 
         for email in emails:
             msg_id = email.get('id', '')
-            # Skip emails that already exist
-            if msg_id in existing_ids:
-                logger.debug('Email %s is new (already in system), skipping', msg_id)
+            
+            # Skip emails without a message ID
+            if not msg_id:
+                logger.warning('Email has no message ID, skipping')
                 continue
 
             classification = self._classifier.classify(email)
@@ -318,10 +498,14 @@ class EmailIngestionOrchestrator:
                     processed += 1
                     self._email_provider.mark_as_processed(msg_id)
             except Exception as exc:
-                logger.exception(
-                    'Error processing email %s', msg_id,
-                )
-                errors.append(str(exc))
+                # Check if this is a duplicate email error (unique constraint violation)
+                if 'UNIQUE constraint failed: rfq_rfq.email_message_id' in str(exc):
+                    logger.info('Email %s already processed by another worker, skipping', msg_id)
+                else:
+                    logger.exception(
+                        'Error processing email %s', msg_id,
+                    )
+                    errors.append(str(exc))
 
         logger.info('Processed %d emails (%d errors)', processed, len(errors))
         return {
@@ -449,15 +633,19 @@ class EmailIngestionOrchestrator:
             logger.info('Email appears to be a bounce/delivery failure notification, skipping')
             return None
         
-        # For quotations, try to find existing order by RFQ number in subject
-        if classification == 'quotation':
+        # For quotations and POs, try to find existing order by RFQ number in subject
+        if classification in ['quotation', 'po']:
             order = self._find_order_for_quotation(email)
             if order:
-                logger.info('Processing quotation for existing Order %s', order.rfq_number)
-                self._handle_quotation(email, order)
+                logger.info('Processing %s for existing Order %s', classification.upper(), order.rfq_number)
+                if classification == 'quotation':
+                    self._handle_quotation(email, order)
+                else:
+                    logger.info('=== PO EMAIL PROCESSING ===')
+                    self._handle_po(email, order)
                 return order
             else:
-                logger.info('No existing Order found for quotation, creating new order')
+                logger.info('No existing Order found for %s, creating new order', classification)
 
         order = self._rfq_builder.create_from_email(
             subject=email.get('subject', ''),
@@ -469,6 +657,14 @@ class EmailIngestionOrchestrator:
             email_message_id=email.get('id', ''),
             email_classification=classification,
         )
+
+        # Ensure order type is set correctly based on classification
+        if classification == 'po':
+            order.type = 'purchase_order'
+            order.stage = 'order'
+            order.status = 'processing'
+            order.save(update_fields=['type', 'stage', 'status'])
+            logger.info('Set order type to purchase_order for new PO email')
 
         handler = {
             'rfq': self._handle_rfq_po,

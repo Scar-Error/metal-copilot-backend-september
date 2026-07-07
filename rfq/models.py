@@ -79,7 +79,7 @@ class Order(models.Model):
     email_received_at = models.DateTimeField()
     email_body = models.TextField(blank=True)
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='email', help_text="Source of order (email, manual, test)")
-    email_message_id = models.CharField(max_length=500, blank=True, db_index=True, help_text="Unique message ID from email provider for deduplication")
+    email_message_id = models.CharField(max_length=500, blank=True, db_index=True, unique=True, help_text="Unique message ID from email provider for deduplication")
     email_classification = models.CharField(max_length=20, choices=EMAIL_CLASSIFICATION_CHOICES, default='other', help_text="AI-classified email type: RFQ, PO, Quotation, or Other")
     quotation_email_sent = models.BooleanField(default=False, help_text="Whether customer quotation email has been sent for this order")
 

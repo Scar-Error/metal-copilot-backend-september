@@ -11,10 +11,10 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
 
 app.conf.beat_schedule = {
-    # 'process-emails-every-1-minute': {
-    #     'task': 'rfq.tasks.monitor_emails_for_rfqs',
-    #     'schedule': crontab(minute='*/1'),
-    # },
+    'process-emails-every-1-minute': {
+        'task': 'rfq.tasks.monitor_emails_for_rfqs',
+        'schedule': crontab(minute='*/1'),
+    },
     'cleanup-old-attachments-daily': {
         'task': 'rfq.tasks.cleanup_old_attachments',
         'schedule': crontab(hour=3, minute=0),

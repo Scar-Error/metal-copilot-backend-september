@@ -71,7 +71,7 @@ class GraphEmailProvider:
                 '$top': limit,
                 '$orderby': 'receivedDateTime desc',
                 '$select': 'id,subject,from,receivedDateTime,body,hasAttachments,attachments',
-                '$filter': f'receivedDateTime ge {since}',
+                '$filter': f'receivedDateTime ge {since} and not (categories/any(c:c eq \'RFQ Processed\'))',
             },
         )
         return self._normalize_emails(emails.get('value', []) if emails else [])

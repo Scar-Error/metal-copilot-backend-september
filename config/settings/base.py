@@ -191,10 +191,31 @@ LOGGING = {
             'filename': BASE_DIR / 'logs' / 'bc_sync.log',
             'formatter': 'bc_sync',
         },
+        'email_polling': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'logs' / 'email_polling.log',
+            'formatter': 'bc_sync',
+        },
     },
     'loggers': {
         'bc_sync': {
             'handlers': ['bc_sync'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'rfq': {
+            'handlers': ['email_polling'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'microsoft_auth': {
+            'handlers': ['email_polling'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'celery': {
+            'handlers': ['email_polling'],
             'level': 'INFO',
             'propagate': False,
         },

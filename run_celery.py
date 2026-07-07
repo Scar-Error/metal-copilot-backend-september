@@ -36,10 +36,10 @@ os.environ.setdefault('CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP', 'true')
 CELERY_APP = 'config'
 
 QUEUES: List[tuple] = [
-    ('email_polling',  None),   # concurrency = auto
+    ('email_polling',  1),   # Single worker to prevent duplicate processing
     ('ai_processing',  1),
-    ('email_dispatch', None),
-    ('housekeeping',   None),
+    ('email_dispatch', 1),
+    ('housekeeping',   1),
 ]
 
 processes: List[subprocess.Popen] = []
