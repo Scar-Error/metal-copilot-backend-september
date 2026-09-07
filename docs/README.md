@@ -1,6 +1,6 @@
 # RFQ Management API
 
-Request for Quotation (RFQ) management backend — Django REST Framework + Celery.
+Request for Quotation (RFQ) management backend — Django REST Framework.
 
 ## Authentication
 
@@ -82,17 +82,11 @@ Core models (see `rfq/models.py`):
 
 ---
 
-## Monitoring Tasks
+## Monitoring Endpoints
 
-All monitoring endpoints return a Celery `AsyncResult` with this shape:
+Email pulling and product sync from Business Central are manual, synchronous operations:
 
-```json
-{
-  "task_id": "uuid",
-  "status": "SUCCESS|FAILURE|PENDING|STARTED",
-  "result": { ... },
-  "error": null
-}
-```
+- `POST /api/rfq/monitor/emails/pull/` — pull Outlook emails into email threads
+- `POST /api/rfq/monitor/sync-products/` — sync products from Business Central
 
-Refer to endpoint‑specific `docs/endpoints/rfq/monitor-*.md` for `result` schemas.
+Refer to endpoint‑specific `docs/endpoints/rfq/monitor-*.md` for details.

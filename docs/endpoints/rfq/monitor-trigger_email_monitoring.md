@@ -1,6 +1,13 @@
 # Monitor Endpoints
 
-All monitor endpoints trigger or inspect Celery async tasks.
+> The Celery-based monitor endpoints (`trigger_email_monitoring`,
+> `trigger_ai_processing`, `trigger_bc_sync`, `get_task_status`,
+> `get_microsoft_emails`) and Celery itself have been **removed**. The only
+> remaining monitor endpoints are the manual, synchronous:
+> - `POST /api/rfq/monitor/emails/pull/` — run the email ingestion pipeline
+> - `POST /api/rfq/monitor/sync-products/` — sync products from Business Central
+
+The rest of this file documents the removed Celery-era endpoints for reference.
 
 ## POST /api/rfqs/monitor/trigger_email_monitoring/
 
@@ -47,17 +54,6 @@ Fetch emails from Microsoft Graph. Same as `trigger_email_monitoring` but return
 {
   "task_id": "uuid",
   "status": "PENDING"
-}
-```
-
-## GET /api/rfqs/monitor/get_rfq_emails/
-
-Trigger an email fetch and return the task ID for polling.
-
-**Response 200:**
-```json
-{
-  "task_id": "uuid"
 }
 ```
 

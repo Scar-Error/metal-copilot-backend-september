@@ -24,7 +24,6 @@ Content-Type: application/json
   "source": "email",
   "rfq_number": "RFQ-2025-0042",
   "company_name": "Acme Corp Updated",
-  "supplier_email": "new@example.com",
   "status": "processing",
   "priority": "high",
   "items_description": "Updated description",
@@ -49,4 +48,4 @@ Content-Type: application/json
 
 Returns the updated RFQ object.
 
-> **Note**: `reviewed_by`, `bc_*`, `supplier_email_*`, `ai_*`, and `processing_*` fields are managed by the system and should generally not be manually set via PUT/PATCH.
+> **Note**: `reviewed_by`, `bc_*`, `ai_*`, and `processing_*` fields are managed by the system and should generally not be manually set via PUT/PATCH.

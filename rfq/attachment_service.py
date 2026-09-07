@@ -2,21 +2,24 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 from django.conf import settings
 
-from rfq.interfaces import AttachmentData, FileStorage
-from rfq.models import Order, OrderAttachment
+from rfq.interfaces import AttachmentData
 
 logger = logging.getLogger(__name__)
 
 
 class LocalFileStorage:
-    """Save files to the local filesystem under ``settings.MEDIA_ROOT``."""
+    """Save files to the local filesystem under a base directory."""
+
+    def __init__(self, base_dir: Optional[str] = None) -> None:
+        self._base_dir = Path(base_dir) if base_dir else settings.MEDIA_ROOT
 
     def save(self, filename: str, content: bytes, subdir: str = '') -> str:
-        dest = settings.MEDIA_ROOT / subdir
+        dest = self._base_dir / subdir
         os.makedirs(dest, exist_ok=True)
         path = dest / filename
         with open(path, 'wb') as f:
@@ -38,46 +41,41 @@ class LocalFileStorage:
 
 
 class AttachmentService:
-    """Download, store, and manage order attachments."""
+    """
+    Download, store temporarily, and clean up email attachments.
 
-    def __init__(self, storage: Optional[FileStorage] = None) -> None:
-        self._storage: FileStorage = storage or LocalFileStorage()
+    Attachments are kept under ``MEDIA_ROOT/temp_attachments/<order_id>/`` so
+    image attachments can be handed to the AI extractor without becoming
+    permanent records. Document attachments are stored long enough to have
+    their text extracted.
+    """
 
-    def save_attachment(
-        self,
-        order: Order,
-        attachment: AttachmentData,
-        content: bytes,
-    ) -> Optional[OrderAttachment]:
-        """Persist an attachment and return the model instance."""
-        filename = attachment.get('name', 'unnamed')
-        if not filename or '..' in filename or '/' in filename or '\\' in filename:
-            logger.warning('Suspicious attachment filename: %s', filename)
-            return None
+    def __init__(self, storage=None) -> None:
+        self._storage = storage or LocalFileStorage()
+
+    def save_temp(self, order_id, filename: str, content: bytes) -> Optional[str]:
+        """Save an attachment temporarily and return the file path."""
+        if not filename or '..' in filename:
+            filename = 'attachment'
+        safe_name = Path(filename).name or 'attachment'
 
         max_size = getattr(settings, 'RFQ_ATTACHMENT_MAX_SIZE', 50 * 1024 * 1024)
         if len(content) > max_size:
             logger.error(
                 'Attachment %s exceeds size limit (%d > %d)',
-                filename, len(content), max_size,
+                safe_name, len(content), max_size,
             )
             return None
 
         try:
-            file_path = self._storage.save(
-                filename=filename,
+            return self._storage.save(
+                filename=safe_name,
                 content=content,
-                subdir=f'attachments/{order.id}',
+                subdir=f'temp_attachments/{order_id}',
             )
         except OSError as exc:
-            logger.error('Failed to save attachment %s: %s', filename, exc)
+            logger.error('Failed to save attachment %s: %s', safe_name, exc)
             return None
 
-        return OrderAttachment.objects.create(
-            order=order,
-            filename=filename,
-            file_path=file_path,
-            file_size=attachment.get('size', len(content)),
-            file_type=filename.split('.')[-1].upper() if '.' in filename else 'UNKNOWN',
-            mime_type=attachment.get('content_type', ''),
-        )
+    def delete(self, path: str) -> bool:
+        return self._storage.delete(path)

@@ -1,68 +1,83 @@
 import logging
 
-from celery import current_app
-from celery.result import AsyncResult
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from microsoft_auth.graph_api import GraphEmailProvider
-
 logger = logging.getLogger(__name__)
 
 
-def _build_provider(user) -> GraphEmailProvider:
-    token = user.microsoft_token
-    token.refresh_if_expired()
-    return GraphEmailProvider(
-        access_token=token.access_token,
-        refresh_token=token.refresh_token,
-        token_expires_at=token.token_expires_at,
-        user=user,
-    )
-
-
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def trigger_email_monitoring(request):
-    from rfq.tasks import monitor_emails_for_rfqs
-    task = monitor_emails_for_rfqs.delay()
+def pull_emails(request):
+    """
+    Start a background email pull from Microsoft Graph within a date/time range.
+
+    Dispatches a Celery task and returns immediately with a task_id; poll
+    `GET /api/rfq/monitor/task/<task_id>/` for the result.
+    """
+    from datetime import timezone as dt_timezone
+
+    from django.utils import timezone
+    from django.utils.dateparse import parse_datetime
+
+    from rfq.tasks import pull_emails_task
+
+    start_str = request.data.get('start_time')
+    end_str = request.data.get('end_time')
+
+    if not start_str or not end_str:
+        return Response(
+            {'success': False, 'error': 'start_time and end_time are required'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    start_time = parse_datetime(start_str)
+    end_time = parse_datetime(end_str)
+
+    if not start_time or not end_time:
+        return Response(
+            {'success': False, 'error': 'Invalid date format. Use ISO 8601 (e.g. 2026-08-01T00:00:00Z)'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Ensure timezone-aware — frontend sends UTC via toISOString()
+    if timezone.is_naive(start_time):
+        start_time = timezone.make_aware(start_time, dt_timezone.utc)
+    if timezone.is_naive(end_time):
+        end_time = timezone.make_aware(end_time, dt_timezone.utc)
+
+    # Fast-fail if the user has no Microsoft token — the task would just fail.
+    try:
+        request.user.microsoft_token
+    except Exception:
+        return Response(
+            {'success': False, 'error': 'No valid Microsoft token'},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    start_iso = start_time.astimezone(dt_timezone.utc).isoformat()
+    end_iso = end_time.astimezone(dt_timezone.utc).isoformat()
+
+    task = pull_emails_task.delay(request.user.id, start_iso, end_iso)
+
     return Response({
         'success': True,
         'task_id': task.id,
-        'message': 'Email monitoring task started',
-    })
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def trigger_ai_processing(request, order_id):
-    from rfq.tasks import process_rfq_with_ai
-    task = process_rfq_with_ai.delay(order_id)
-    return Response({
-        'success': True,
-        'task_id': task.id,
-        'message': f'AI processing started for order {order_id}',
-    })
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def trigger_business_central_sync(request, order_id):
-    from rfq.tasks import sync_with_business_central
-    task = sync_with_business_central.delay(order_id)
-    return Response({
-        'success': True,
-        'task_id': task.id,
-        'message': f'Business Central sync started for order {order_id}',
+        'status': 'PENDING',
+        'message': 'Email pull started in the background',
     })
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_task_status(request, task_id):
-    task = AsyncResult(task_id, app=current_app)
+    from celery.result import AsyncResult
+
+    from config.celery import app as celery_app
+
+    task = AsyncResult(task_id, app=celery_app)
     data = {
         'task_id': task_id,
         'status': task.status,
@@ -82,42 +97,4 @@ def sync_products_from_bc(request):
         'success': True,
         'synced_count': count,
         'message': f'Synced {count} products from Business Central',
-    })
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_microsoft_emails(request):
-    try:
-        provider = _build_provider(request.user)
-    except Exception:
-        return Response(
-            {'success': False, 'error': 'No valid Microsoft token'},
-            status=status.HTTP_401_UNAUTHORIZED,
-        )
-
-    emails = provider.fetch_emails(limit=20)
-    return Response({'success': True, 'emails': emails})
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_rfq_emails(request):
-    try:
-        provider = _build_provider(request.user)
-    except Exception:
-        return Response(
-            {'success': False, 'error': 'No valid Microsoft token'},
-            status=status.HTTP_401_UNAUTHORIZED,
-        )
-
-    from rfq.orchestrator import RfqDetector
-    emails = provider.fetch_emails(days_back=7)
-    detector = RfqDetector()
-    rfq_emails = [e for e in emails if detector.is_rfq(e)]
-
-    return Response({
-        'success': True,
-        'rfq_emails': rfq_emails,
-        'count': len(rfq_emails),
     })

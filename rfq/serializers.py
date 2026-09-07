@@ -1,5 +1,11 @@
 from rest_framework import serializers
-from rfq.models import Order, OrderItem, OrderAttachment, OrderAnalytics
+from rfq.models import (
+    Order, OrderItem, OrderAnalytics, OrderAiMetadata, OrderBusinessCentral,
+    EmailThread, EmailMessage,
+)
+
+ALLOWED_UNITS = ('pc', 'pcs', 'kg', 'ltr')
+ITEM_FIELD_MAX_LEN = 99
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
@@ -11,6 +17,20 @@ class OrderItemSerializer(serializers.ModelSerializer):
             'extraction_confidence', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'extraction_confidence']
+        extra_kwargs = {
+            'item_name': {'max_length': ITEM_FIELD_MAX_LEN},
+            'item_code': {'max_length': ITEM_FIELD_MAX_LEN},
+        }
+
+    def validate_unit(self, value):
+        if value is None or value == '':
+            return value
+        normalized = str(value).strip().lower()
+        if normalized not in ALLOWED_UNITS:
+            raise serializers.ValidationError(
+                f'Unit must be one of: {", ".join(ALLOWED_UNITS)}'
+            )
+        return normalized
 
     def validate_quantity(self, value):
         if value < 0:
@@ -31,52 +51,44 @@ class OrderItemSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class OrderAttachmentSerializer(serializers.ModelSerializer):
+class OrderAiMetadataSerializer(serializers.ModelSerializer):
     class Meta:
-        model = OrderAttachment
-        fields = [
-            'id', 'order', 'filename', 'file_path', 'file_size',
-            'file_type', 'mime_type', 'uploaded_at',
-        ]
-        read_only_fields = ['id', 'uploaded_at']
+        model = OrderAiMetadata
+        fields = ['processed', 'confidence_score', 'processing_errors', 'classification']
+
+
+class OrderBusinessCentralSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderBusinessCentral
+        fields = ['quote_id', 'sales_order_id', 'sales_order_number', 'synced', 'synced_at']
 
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
-    attachments = OrderAttachmentSerializer(many=True, read_only=True)
+    ai_metadata = OrderAiMetadataSerializer(read_only=True)
+    bc_data = OrderBusinessCentralSerializer(read_only=True)
     reviewed_by_username = serializers.CharField(
         source='reviewed_by.username', read_only=True,
     )
     contact_name = serializers.CharField(
         source='contact.company_name', read_only=True, default=None,
     )
-    supplier_name = serializers.CharField(
-        source='supplier.company_name', read_only=True, default=None,
-    )
-    supplier_id = serializers.IntegerField(
-        source='supplier.id', read_only=True, default=None,
-    )
 
     class Meta:
         model = Order
         fields = [
-            'id', 'type', 'stage', 'rfq_number', 'company_name',
-            'contact', 'contact_name', 'supplier', 'supplier_id', 'supplier_name',
-            'supplier_email', 'status', 'priority', 'source',
-            'email_subject', 'email_sender', 'email_received_at', 'email_body',
-            'email_classification',
+            'id', 'type', 'rfq_number', 'company_name',
+            'contact', 'contact_name',
+            'source', 'po_number',
             'items_description', 'quantity', 'specifications',
             'delivery_date', 'budget',
-            'ai_processed', 'ai_confidence_score', 'processing_errors',
-            'supplier_email_sent', 'supplier_email_sent_at', 'supplier_email_error',
+            'ai_metadata', 'bc_data',
             'reviewed_by', 'reviewed_by_username', 'reviewed_at', 'notes',
-            'items', 'attachments',
+            'items',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'rfq_number', 'email_received_at', 'ai_processed',
-            'ai_confidence_score', 'processing_errors',
-            'supplier_email_sent', 'supplier_email_sent_at', 'supplier_email_error',
+            'id', 'rfq_number', 'po_number',
             'reviewed_by', 'reviewed_at', 'created_at', 'updated_at',
         ]
 
@@ -87,11 +99,8 @@ class OrderListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = [
-            'id', 'type', 'stage', 'rfq_number', 'company_name', 'status', 'priority',
-            'source', 'email_subject', 'email_sender', 'email_received_at',
-            'email_classification',
-            'ai_processed', 'items_count',
-            'supplier_email', 'supplier_email_sent', 'supplier_email_sent_at',
+            'id', 'type', 'rfq_number', 'company_name',
+            'source', 'items_count',
         ]
 
     def get_items_count(self, obj):
@@ -106,7 +115,54 @@ class OrderAnalyticsSerializer(serializers.ModelSerializer):
 
 
 class DealSerializer(serializers.ModelSerializer):
-    title = serializers.CharField(source='email_subject')
+    number = serializers.CharField(source='rfq_number', required=False)
+    company = serializers.CharField(source='company_name', required=False)
+    value = serializers.DecimalField(source='budget', max_digits=12, decimal_places=2, allow_null=True, required=False)
+    expected_date = serializers.DateField(source='delivery_date', allow_null=True, required=False)
+    contact_person = serializers.SerializerMethodField()
+    is_manual = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Order
+        fields = [
+            'id', 'number', 'type', 'source',
+            'company', 'contact_person', 'value',
+            'expected_date', 'notes', 'is_manual',
+        ]
+        extra_kwargs = {
+            'type': {'required': False},
+            'notes': {'required': False},
+            'source': {'required': False},
+        }
+
+    def get_contact_person(self, obj):
+        if obj.contact:
+            return obj.contact.contact_person or obj.contact.company_name
+        return ''
+
+    def get_is_manual(self, obj):
+        return obj.source == 'manual'
+
+    def create(self, validated_data):
+        if not validated_data.get('rfq_number'):
+            from rfq.utils import generate_rfq_number
+            validated_data['rfq_number'] = generate_rfq_number()
+        if not validated_data.get('source'):
+            validated_data['source'] = 'manual'
+        return super().create(validated_data)
+
+
+class EmailMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmailMessage
+        fields = [
+            'id', 'message_id', 'subject', 'sender_name', 'sender_email',
+            'received_at', 'body', 'body_preview', 'has_attachments', 'category', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class DealDetailSerializer(serializers.ModelSerializer):
     number = serializers.CharField(source='rfq_number')
     company = serializers.CharField(source='company_name')
     value = serializers.DecimalField(source='budget', max_digits=12, decimal_places=2, allow_null=True)
@@ -116,12 +172,39 @@ class DealSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = [
-            'id', 'title', 'type', 'stage', 'number',
+            'id', 'number', 'type',
             'company', 'contact_person', 'value',
-            'probability', 'expected_date', 'notes',
+            'expected_date', 'notes', 'items_description',
+            'specifications', 'created_at', 'updated_at',
         ]
 
     def get_contact_person(self, obj):
         if obj.contact:
             return obj.contact.contact_person or obj.contact.company_name
         return ''
+
+
+class RfqDetailSerializer(serializers.ModelSerializer):
+    items = OrderItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Order
+        fields = [
+            'id', 'rfq_number', 'company_name',
+            'items_description', 'quantity', 'specifications', 'delivery_date',
+            'items', 'created_at', 'updated_at',
+        ]
+
+
+class EmailThreadSerializer(serializers.ModelSerializer):
+    messages = EmailMessageSerializer(many=True, read_only=True)
+    orders = RfqDetailSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = EmailThread
+        fields = [
+            'id', 'conversation_id', 'subject', 'message_count',
+            'last_message_at', 'category', 'stage', 'user',
+            'orders', 'messages', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'message_count', 'category', 'created_at', 'updated_at']

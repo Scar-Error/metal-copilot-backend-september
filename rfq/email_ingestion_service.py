@@ -3,15 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from django.conf import settings
-
 from microsoft_auth.graph_api import GraphEmailProvider
 from authentication.models import MicrosoftToken
-from rfq.models import Order
 from rfq.orchestrator import EmailIngestionOrchestrator
 from rfq.rfq_builder import RfqBuilder
-from rfq.attachment_service import AttachmentService
-from rfq.data_extractors import OpenAiExtractor, KeywordExtractor
+from rfq.data_extractors import OpenAiExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -42,37 +38,13 @@ class EmailIngestionService:
             self._orchestrator = EmailIngestionOrchestrator(
                 email_provider=graph,
                 data_extractor=OpenAiExtractor(),
-                fallback_extractor=KeywordExtractor(),
                 rfq_builder=RfqBuilder(),
-                attachment_service=AttachmentService(),
-                use_ai_classification=True,
+                user=self.user,
             )
         return self._orchestrator
 
     def check_and_process_new_emails(self, days_back: int = 1) -> dict:
         return self.orchestrator.poll_new_emails(days_back=days_back)
-
-    def send_to_supplier(
-        self,
-        order_id: int,
-        supplier_email: Optional[str] = None,
-    ) -> dict:
-        try:
-            order = Order.objects.get(id=order_id)
-            if supplier_email:
-                order.supplier_email = supplier_email
-                order.save(update_fields=['supplier_email'])
-
-            from rfq.email_service import SupplierEmailService
-            svc = SupplierEmailService(
-                email_provider=self.orchestrator._email_provider,
-            )
-            return svc.send_rfq_to_supplier(order)
-        except Order.DoesNotExist:
-            return {'success': False, 'message': 'Order not found'}
-        except Exception as exc:
-            logger.error('send_to_supplier error: %s', exc)
-            return {'success': False, 'message': str(exc)}
 
     # ------------------------------------------------------------------
     # Internal helpers

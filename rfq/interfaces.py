@@ -16,8 +16,10 @@ class EmailMessage(TypedDict, total=False):
     sender_email: str
     received_at: str
     body: str
+    body_preview: str
+    conversation_id: str
     has_attachments: bool
-    attachments: List[Dict[str, Any]]
+    attachments: List['AttachmentData']
 
 
 class AttachmentData(TypedDict, total=False):
@@ -49,6 +51,7 @@ class ExtractedRfqData(TypedDict, total=False):
     items: List[ExtractedItem]
     confidence_score: float
     description: str
+    notes: str
 
 
 class ExtractionResult(TypedDict, total=False):
@@ -79,14 +82,6 @@ class EmailProvider(Protocol):
         """Fetch a single email with full details."""
         ...
 
-    def download_attachment(
-        self,
-        email_id: str,
-        attachment_id: str,
-    ) -> Optional[bytes]:
-        """Download raw bytes of an attachment."""
-        ...
-
     def get_attachments(
         self,
         email_id: str,
@@ -94,14 +89,12 @@ class EmailProvider(Protocol):
         """List metadata for all attachments on an email."""
         ...
 
-    def send_email(
+    def download_attachment(
         self,
-        to: str,
-        subject: str,
-        body: str,
-        content_type: str = 'HTML',
-    ) -> bool:
-        """Send an email on behalf of the authenticated user."""
+        email_id: str,
+        attachment_id: str,
+    ) -> Optional[bytes]:
+        """Download raw bytes of an attachment."""
         ...
 
     def mark_as_processed(self, email_id: str) -> bool:
@@ -120,17 +113,39 @@ class EmailProvider(Protocol):
 
 @runtime_checkable
 class EmailClassifier(Protocol):
-    """Classify an incoming email as RFQ/PO, Quotation, or Other."""
+    """Classify an incoming email as RFQ/PO/Quotation or Other."""
 
     def classify(self, email: EmailMessage) -> EmailClassification:
         """
-        Return one of ``'rfq_po'``, ``'quotation'``, or ``'other'``.
+        Return one of ``'rfq'``, ``'po'``, ``'quotation'``, or ``'other'``.
         """
         ...
 
 
 # ---------------------------------------------------------------------------
-# Document Parser (extract text from PDF / DOCX / XLSX)
+# Data Extractor (AI / fallback)
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class DataExtractor(Protocol):
+    """Extract structured RFQ data from text content."""
+
+    def extract(
+        self,
+        text: str,
+        source_label: str = '',
+        is_quotation: bool = False,
+        images: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[ExtractedRfqData]:
+        """
+        Parse text and return structured RFQ data.
+        Returns None if extraction is not possible.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Document Parser (extract text from PDF / DOCX)
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
@@ -143,43 +158,6 @@ class DocumentParser(Protocol):
 
     def extract_text(self, file_path: str) -> str:
         """Return the full text content of the document."""
-        ...
-
-
-# ---------------------------------------------------------------------------
-# Data Extractor (AI / fallback)
-# ---------------------------------------------------------------------------
-
-@runtime_checkable
-class DataExtractor(Protocol):
-    """Extract structured RFQ data from text content."""
-
-    def extract(self, text: str, source_label: str = '') -> Optional[ExtractedRfqData]:
-        """
-        Parse text and return structured RFQ data.
-        Returns None if extraction is not possible.
-        """
-        ...
-
-
-# ---------------------------------------------------------------------------
-# File Storage (local filesystem / S3 / Azure Blob)
-# ---------------------------------------------------------------------------
-
-@runtime_checkable
-class FileStorage(Protocol):
-    """Persist and retrieve files."""
-
-    def save(self, filename: str, content: bytes, subdir: str = '') -> str:
-        """Save a file and return its full path."""
-        ...
-
-    def delete(self, path: str) -> bool:
-        """Remove a file. Return True on success."""
-        ...
-
-    def exists(self, path: str) -> bool:
-        """Check whether a file exists."""
         ...
 
 

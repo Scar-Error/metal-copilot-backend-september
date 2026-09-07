@@ -1,6 +1,6 @@
 # POST /api/rfqs/process_emails/
 
-Trigger the email ingestion pipeline synchronously (no Celery). This is called by `trigger_email_monitoring` in production.
+Trigger the email ingestion pipeline synchronously.
 
 ## Headers
 

@@ -25,10 +25,6 @@ class InvalidTransitionError(RfqError):
     """An RFQ status change is not allowed by the state machine."""
 
 
-class AttachmentError(RfqError):
-    """Attachment download, validation, or storage failure."""
-
-
 class BusinessCentralError(RfqError):
     """Error communicating with Dynamics 365 Business Central."""
 

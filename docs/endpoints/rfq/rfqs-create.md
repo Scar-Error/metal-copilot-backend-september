@@ -20,7 +20,6 @@ Content-Type: application/json
   "source": "manual",
   "rfq_number": "RFQ-2025-0042",
   "company_name": "Acme Corp",
-  "supplier_email": "supplier@example.com",
   "status": "pending",
   "priority": "medium",
   "items_description": "",

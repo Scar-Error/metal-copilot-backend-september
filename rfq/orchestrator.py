@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, date
 from typing import Dict, List, Optional
 
 from django.conf import settings
 
+from rfq.ai_classifier import AiEmailClassifier, ClassificationUnavailable
 from rfq.attachment_service import AttachmentService
-from rfq.data_extractors import OpenAiExtractor, KeywordExtractor
-from rfq.document_parsers import extract_text, get_parser
+from rfq.data_extractors import OpenAiExtractor
 from rfq.interfaces import (
     DataExtractor,
     EmailClassification,
@@ -16,404 +17,16 @@ from rfq.interfaces import (
     EmailMessage,
     EmailProvider,
     ExtractedRfqData,
-    FileStorage,
 )
 from rfq.models import Order
 from rfq.rfq_builder import RfqBuilder
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Backward-compatible RFQ detectors (delegated to the new classifier)
-# ---------------------------------------------------------------------------
-
-class RfqDetector:
-    """Check whether an email is RFQ-related (legacy binary detector)."""
-
-    def __init__(self, keywords: Optional[List[str]] = None) -> None:
-        self._keywords = keywords or list(getattr(settings, 'RFQ_KEYWORDS', []))
-
-    def is_rfq(self, email: EmailMessage) -> bool:
-        subject = (email.get('subject') or '').lower()
-        body = (email.get('body') or '').lower()
-        return any(
-            kw.lower() in subject or kw.lower() in body
-            for kw in self._keywords
-        )
-
-
-class AiRfqDetector:
-    """LLM-based RFQ detection (legacy binary detector)."""
-
-    def is_rfq(self, email: EmailMessage) -> bool:
-        classification = AiEmailClassifier().classify(email)
-        return classification == 'rfq_po'
-
-
-# ---------------------------------------------------------------------------
-# New three-way email classifier
-# ---------------------------------------------------------------------------
-
-class EmailClassifier:
-    """Keyword-based four-way email classifier."""
-
-    RFQ_KEYWORDS = [
-        'rfq', 'request for quotation', 'request for quote',
-        'quotation request', 'quote request', 'request for proposal', 'rfp',
-        'request for bid', 'bid request', 'tender', 'inquiry',
-    ]
-
-    PO_KEYWORDS = [
-        'purchase order', 'po number', 'po#', 'p.o.', 'order confirmation',
-        'we are pleased to place the following order', 'we order',
-    ]
-
-    QUOTATION_KEYWORDS = [
-        'quotation', 'quote', 'price list', 'pricelist',
-        'proposal', 'offer', 'estimate', 'pricing',
-        'price quote', 'budgetary quote', 'thank you for your inquiry',
-        'please find our quotation',
-    ]
-
-    def classify(self, email: EmailMessage) -> EmailClassification:
-        subject = (email.get('subject') or '').lower()
-        body = (email.get('body') or '').lower()
-        combined = f'{subject} {body}'
-
-        # Check for PO first (more specific)
-        if any(kw in combined for kw in self.PO_KEYWORDS):
-            return 'po'
-
-        # Check for Quotation BEFORE RFQ (supplier quotations may reference RFQ in subject)
-        if any(kw in combined for kw in self.QUOTATION_KEYWORDS):
-            return 'quotation'
-
-        # Check for RFQ
-        if any(kw in combined for kw in self.RFQ_KEYWORDS):
-            return 'rfq'
-
-        return 'other'
-
-
-class AiEmailClassifier:
-    """LLM-based four-way email classifier with keyword fallback and hybrid signals."""
-
-    def classify(self, email: EmailMessage) -> EmailClassification:
-        subject = (email.get('subject') or '').lower()
-        body = (email.get('body') or '').lower()
-        full_body = body[:5000]  # Use more body for signal detection
-        
-        # If email has attachments, assume it's a quotation (suppliers send quotations with attachments)
-        # This is a heuristic since we can't extract attachment text without email_provider
-        has_attachments = email.get('has_attachments', False)
-        logger.info('Email classification - has_attachments: %s', has_attachments)
-        
-        text = f'Subject: {subject}\n\nBody: {full_body}'
-        
-        logger.info('Email classification - Subject: %s', subject[:100])
-
-        # HYBRID SIGNAL 1: Check for pricing data (strong quotation signal)
-        pricing_indicators = [
-            'unit price', 'unit_price', 'unit $', 'price:', '$', 'total price',
-            'pricing', 'price list', 'quotation', 'quote', 'proposal',
-            'thank you for your inquiry', 'please find our quotation',
-            'we are pleased to quote', 'our quotation', 'price per',
-            'cost per', 'rate', 'amount', 'invoice', 'bill'
-        ]
-        # Check case-insensitive for pricing indicators
-        has_pricing = any(indicator in full_body.lower() for indicator in pricing_indicators)
-        
-        # Additional: Check for currency patterns (numbers with $)
-        import re
-        currency_pattern = r'\$\s*\d+\.?\d*'
-        has_currency = bool(re.search(currency_pattern, full_body))
-        
-        logger.info('Signal detection - has_pricing: %s, has_currency: %s', has_pricing, has_currency)
-        
-        # HYBRID SIGNAL 2: Check for RFQ request language (strong RFQ signal)
-        rfq_request_indicators = [
-            'request for quotation', 'please quote', 'we need a quote',
-            'please provide pricing', 'request for proposal', 'rfp',
-            'we would like to request', 'can you provide us with',
-            'we are looking for', 'please send us your quote'
-        ]
-        # Check case-insensitive for RFQ request indicators
-        has_rfq_request = any(indicator in full_body.lower() for indicator in rfq_request_indicators)
-        
-        logger.info('Signal detection - has_rfq_request: %s', has_rfq_request)
-        
-        # HYBRID SIGNAL 3: Check for PO language (strong PO signal)
-        po_indicators = [
-            'purchase order', 'po number', 'we order', 'we are pleased to place',
-            'order confirmation', 'please process our order', 'po#', 'po #',
-            'p.o.', 'p.o', 'purchase order #', 'order #', 'customer order',
-            'our order', 'this order', 'confirming order', 'order placed',
-            'we confirm', 'we place order', 'we would like to order', 'we would like to place',
-            'we hereby order', 'we hereby confirm', 'confirming our order', 'our purchase order',
-            'customer po', 'client order', 'client purchase order'
-        ]
-        # Check both subject and body for PO indicators (case-insensitive)
-        has_po = any(indicator in subject.lower() or indicator in full_body.lower() for indicator in po_indicators)
-        
-        # HYBRID SIGNAL 3.5: Check for quotation-specific phrases (should override PO)
-        quotation_indicators = [
-            'thank you for your inquiry', 'please find our quotation', 'we are pleased to quote',
-            'our quotation', 'quotation for', 'price quote', 'quotation attached',
-            'attached quotation', 'find attached', 'quotation reference', 'quotation no',
-            'find attached our quotation', 'attached is our quotation', 'here is our quotation',
-            'please find attached', 'attached please find', 'quotation follows', 'quotation below',
-            'our price quote', 'our proposal', 'our offer', 'quotation regarding',
-            'quotation subject', 'quotation ref', 'quotation number', 'quote for',
-            'quote regarding', 'quote reference', 'quote number', 'price quotation',
-            'sales quotation', 'formal quotation', 'pro forma quotation'
-        ]
-        # Check case-insensitive for quotation phrases
-        has_quotation_phrase = any(indicator in full_body.lower() for indicator in quotation_indicators)
-        
-        logger.info('Signal detection - has_po: %s, has_quotation_phrase: %s', has_po, has_quotation_phrase)
-
-        # STRONG PO OVERRIDE: If a PO number or explicit PO phrase is present,
-        # force PO classification before expensive AI calls or scoring.
-        po_number_pattern = r'\bPO\s*[-:]?\s*[A-Z0-9-]+\b'
-        try:
-            import re as _re
-            # Check subject first - if subject contains "purchase order" or "po", force PO
-            subject_lower = subject.lower()
-            if 'purchase order' in subject_lower or 'po ' in subject_lower or subject_lower.startswith('po'):
-                logger.info('Subject contains PO indicator, forcing PO classification')
-                return 'po'
-            # Check for PO number pattern
-            if _re.search(po_number_pattern, subject + ' ' + full_body, _re.IGNORECASE):
-                logger.info('Strong PO pattern detected in email, overriding to PO')
-                return 'po'
-            strong_po_phrases = [
-                'we order', 'we are pleased to place', 'please process our order',
-                'order confirmation', 'confirming our order', 'we confirm'
-            ]
-            if any(phrase in subject_lower or phrase in full_body.lower() for phrase in strong_po_phrases):
-                logger.info('Strong PO phrase detected in email, overriding to PO')
-                return 'po'
-        except Exception:
-            logger.exception('Error during PO override detection; continuing with normal classification')
-        
-        # HYBRID SIGNAL 4: Check for RFQ number in subject (could be quotation referencing RFQ)
-        import re
-        rfq_number_pattern = r'[Rr][Ff][Qq][-\s]?(\d{8}[-\s]?[A-Fa-f0-9]{8}|\d{4}[-\s]?\d{3})'
-        has_rfq_number = bool(re.search(rfq_number_pattern, subject))
-        logger.info('Signal detection - has_rfq_number: %s', has_rfq_number)
-        
-        # SCORING SYSTEM: Calculate scores for each type to prevent mixing
-        rfq_score = 0
-        quotation_score = 0
-        po_score = 0
-        
-        # RFQ signals
-        if has_rfq_request:
-            rfq_score += 5
-        if has_rfq_number and not (has_pricing or has_currency):
-            rfq_score += 3
-        
-        # Quotation signals (highest priority to prevent PO confusion)
-        if has_quotation_phrase:
-            quotation_score += 10  # Strong quotation signal
-        if has_pricing:
-            quotation_score += 4
-        if has_currency:
-            quotation_score += 3
-        if has_attachments:
-            quotation_score += 2
-        if has_rfq_number and (has_pricing or has_currency):
-            quotation_score += 5  # Quotation referencing RFQ
-        
-        # PO signals
-        if has_po:
-            po_score += 8
-            # If PO has RFQ number, it's even stronger (PO referencing RFQ)
-            if has_rfq_number:
-                po_score += 5
-        # Reduce PO score if quotation signals present (prevent mixing)
-        if has_quotation_phrase and has_po:
-            po_score -= 5  # Quotation overrides PO
-        
-        logger.info('Scoring - RFQ: %d, QUOTATION: %d, PO: %d', rfq_score, quotation_score, po_score)
-        
-        # PRIMARY: Use AI classifier for all classifications
-        from rfq.data_extractors import OpenAiExtractor
-        extractor = OpenAiExtractor()
-        if not extractor._client:
-            logger.info('AI classifier unavailable, using scoring-based hybrid signals')
-            # Use scoring to determine winner
-            max_score = max(rfq_score, quotation_score, po_score)
-            if max_score == 0:
-                logger.info('No strong signals, using keyword classifier')
-                return EmailClassifier().classify(email)
-            if quotation_score >= max_score and quotation_score > 0:
-                logger.info('Scoring winner: QUOTATION (score=%d)', quotation_score)
-                return 'quotation'
-            if po_score >= max_score and po_score > 0:
-                logger.info('Scoring winner: PO (score=%d)', po_score)
-                return 'po'
-            if rfq_score >= max_score and rfq_score > 0:
-                logger.info('Scoring winner: RFQ (score=%d)', rfq_score)
-                return 'rfq'
-            return EmailClassifier().classify(email)
-        
-        logger.info('Using AI classifier as primary method for email classification')
-
-        prompt = (
-            'You are an expert procurement document classifier.\n\n'
-            'Your task is to classify an email and its attachments into exactly ONE of these document types:\n\n'
-            '1. RFQ (Request for Quotation)\n'
-            '2. QUOTATION (Supplier Quote / Proposal)\n'
-            '3. PURCHASE_ORDER (PO)\n'
-            '4. OTHER\n\n'
-            'IMPORTANT:\n'
-            'Do not rely on the email subject alone.\n'
-            'Do not rely on filenames alone.\n'
-            'Read the full email body and all attachment text carefully.\n'
-            'Case does not matter - CUSTOMERS may write in ANY case (CAPITAL, small, mixed).\n\n'
-            'Analyze:\n'
-            '- Who is requesting something?\n'
-            '- Who is responding?\n'
-            '- Whether pricing exists.\n'
-            '- Whether an order is being placed.\n'
-            '- Whether products are being requested for quotation.\n\n'
-            'Classification Rules:\n\n'
-            'RFQ:\n'
-            '- Customer is requesting prices, availability, lead times, or quotations.\n'
-            '- Contains phrases like:\n'
-            '  - request for quotation\n'
-            '  - RFQ\n'
-            '  - please quote\n'
-            '  - provide your quotation\n'
-            '  - looking for pricing\n'
-            '  - inquiry\n'
-            '- Usually contains item list and quantities.\n'
-            '- Usually DOES NOT contain accepted pricing or order confirmation.\n\n'
-            'QUOTATION:\n'
-            '- Supplier is responding with prices.\n'
-            '- Contains unit prices, totals, taxes, validity, payment terms, lead time.\n'
-            '- Contains phrases like:\n'
-            '  - quotation\n'
-            '  - quote\n'
-            '  - quoted price\n'
-            '  - validity\n'
-            '  - payment terms\n'
-            '  - lead time\n'
-            '  - thank you for your inquiry\n'
-            '  - please find our quotation\n'
-            '  - we are pleased to quote\n'
-            '- Supplier is offering pricing.\n'
-            '- No order is being placed.\n'
-            '- Subject often contains "Quotation for RFQ-..." or similar.\n\n'
-            'PURCHASE_ORDER:\n'
-            '- Buyer is confirming purchase.\n'
-            '- Contains PO Number, Purchase Order Number, Order Confirmation.\n'
-            '- Buyer is instructing supplier to supply goods.\n'
-            '- Contains phrases like:\n'
-            '  - purchase order\n'
-            '  - PO\n'
-            '  - please supply\n'
-            '  - order confirmation\n'
-            '  - proceed with order\n'
-            '  - we are pleased to place the following order\n'
-            '- Prices may appear, but the key intent is placing an order.\n\n'
-            'Priority Rules:\n'
-            '- If a document asks for pricing → RFQ.\n'
-            '- If a document provides pricing → QUOTATION.\n'
-            '- If a document confirms buying goods → PURCHASE_ORDER.\n'
-            '- Purchase Order has higher priority than Quotation.\n'
-            '- Quotation has higher priority than RFQ.\n\n'
-            'EXAMPLES:\n'
-            'Email with "Quotation for RFQ-123" and pricing table → QUOTATION\n'
-            'Email with "Thank you for your inquiry" and prices → QUOTATION\n'
-            'Email with "We order" or "Please process our order" → PURCHASE_ORDER\n'
-            'Email with "Please quote" or "Request for quotation" → RFQ\n\n'
-            'Reply with only ONE word: RFQ, QUOTATION, PURCHASE_ORDER, or OTHER.\n\n'
-            f'Email content:\n{text}'
-        )
-        try:
-            response = extractor._client.messages.create(
-                model=getattr(settings, 'ANTHROPIC_MODEL', 'claude-sonnet-4-6'),
-                max_tokens=10,
-                temperature=0,
-                messages=[
-                    {
-                        'role': 'user',
-                        'content': prompt,
-                    },
-                ],
-            )
-            answer = response.content[0].text.strip()
-            logger.info('AI classifier result: %s', answer)
-            
-            # Strip markdown code blocks if present
-            if answer.startswith('```json'):
-                answer = answer[7:]  # Remove ```json
-            if answer.startswith('```'):
-                answer = answer[3:]  # Remove ```
-            if answer.endswith('```'):
-                answer = answer[:-3]  # Remove trailing ```
-            answer = answer.strip().upper()
-            
-            # Try to parse as JSON first (in case AI ignores instruction)
-            import json
-            try:
-                result = json.loads(answer.lower())
-                document_type = result.get('document_type', '').upper()
-                if document_type == 'RFQ':
-                    return 'rfq'
-                if document_type == 'PURCHASE_ORDER':
-                    return 'po'
-                if document_type == 'QUOTATION':
-                    return 'quotation'
-                if document_type == 'UNKNOWN' or document_type == 'OTHER':
-                    return 'other'
-            except json.JSONDecodeError:
-                # Not JSON, treat as plain text
-                pass
-            
-            # Plain text response
-            if answer == 'RFQ':
-                return 'rfq'
-            if answer == 'PURCHASE_ORDER':
-                return 'po'
-            if answer == 'QUOTATION':
-                return 'quotation'
-            if answer == 'OTHER':
-                return 'other'
-            logger.warning('AI classifier returned unexpected result: %s, using scoring fallback', answer)
-            # Use scoring system as fallback
-            max_score = max(rfq_score, quotation_score, po_score)
-            if max_score == 0:
-                return EmailClassifier().classify(email)
-            if quotation_score >= max_score and quotation_score > 0:
-                logger.info('Scoring fallback winner: QUOTATION (score=%d)', quotation_score)
-                return 'quotation'
-            if po_score >= max_score and po_score > 0:
-                logger.info('Scoring fallback winner: PO (score=%d)', po_score)
-                return 'po'
-            if rfq_score >= max_score and rfq_score > 0:
-                logger.info('Scoring fallback winner: RFQ (score=%d)', rfq_score)
-                return 'rfq'
-            return EmailClassifier().classify(email)
-        except Exception as exc:
-            logger.warning('AI classification failed, using scoring fallback: %s', exc)
-            # Use scoring system as fallback
-            max_score = max(rfq_score, quotation_score, po_score)
-            if max_score == 0:
-                return EmailClassifier().classify(email)
-            if quotation_score >= max_score and quotation_score > 0:
-                logger.info('Scoring fallback winner: QUOTATION (score=%d)', quotation_score)
-                return 'quotation'
-            if po_score >= max_score and po_score > 0:
-                logger.info('Scoring fallback winner: PO (score=%d)', po_score)
-                return 'po'
-            if rfq_score >= max_score and rfq_score > 0:
-                logger.info('Scoring fallback winner: RFQ (score=%d)', rfq_score)
-                return 'rfq'
-            return EmailClassifier().classify(email)
+# Extensions whose text content we extract to feed the AI.
+DOCUMENT_EXTENSIONS = {'.pdf', '.docx', '.doc'}
+# Extensions we keep temporarily so the AI can inspect them visually.
+IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff', '.tif'}
 
 
 # ---------------------------------------------------------------------------
@@ -432,18 +45,17 @@ class EmailIngestionOrchestrator:
         self,
         email_provider: EmailProvider,
         data_extractor: Optional[DataExtractor] = None,
-        fallback_extractor: Optional[DataExtractor] = None,
         rfq_builder: Optional[RfqBuilder] = None,
-        attachment_service: Optional[AttachmentService] = None,
         classifier: Optional[EmailClassifier] = None,
-        use_ai_classification: bool = True,
+        attachment_service: Optional[AttachmentService] = None,
+        user=None,
     ) -> None:
         self._email_provider = email_provider
         self._data_extractor = data_extractor or OpenAiExtractor()
-        self._fallback_extractor = fallback_extractor or KeywordExtractor()
         self._rfq_builder = rfq_builder or RfqBuilder()
+        self._classifier = classifier or AiEmailClassifier()
         self._attachment_service = attachment_service or AttachmentService()
-        self._classifier = classifier or (AiEmailClassifier() if use_ai_classification else EmailClassifier())
+        self._user = user
 
     # ------------------------------------------------------------------
     # Public API
@@ -487,9 +99,24 @@ class EmailIngestionOrchestrator:
                 logger.warning('Email has no message ID, skipping')
                 continue
 
-            classification = self._classifier.classify(email)
+            try:
+                classification = self._classifier.classify(email)
+            except ClassificationUnavailable as exc:
+                logger.error('Classification unavailable for email %s: %s', msg_id, exc)
+                self._create_classification_failure_task(email, exc)
+                continue
+
+            # Debug: snapshot every classified email for the frontend mailbox.
+            self._record_debug_email(email, classification)
+
             if classification == 'other':
                 logger.debug('Email %s classified as OTHER, skipping', msg_id)
+                # Mark as processed so the poll loop doesn't re-fetch and
+                # re-classify this email on every run.
+                try:
+                    self._email_provider.mark_as_processed(msg_id)
+                except Exception:
+                    logger.exception('Failed to mark email %s as processed', msg_id)
                 continue
 
             try:
@@ -497,6 +124,8 @@ class EmailIngestionOrchestrator:
                 if order:
                     processed += 1
                     self._email_provider.mark_as_processed(msg_id)
+                    # Attach the generated order to the debug snapshot.
+                    self._link_debug_email(msg_id, order)
             except Exception as exc:
                 # Check if this is a duplicate email error (unique constraint violation)
                 if 'UNIQUE constraint failed: rfq_rfq.email_message_id' in str(exc):
@@ -516,15 +145,80 @@ class EmailIngestionOrchestrator:
 
     def process_single_email(self, email: EmailMessage) -> Optional[Order]:
         """Process one email independently (useful for on-demand API calls)."""
-        classification = self._classifier.classify(email)
-        if classification == 'other':
-            logger.debug('Email classified as OTHER, skipping')
+        try:
+            classification = self._classifier.classify(email)
+        except ClassificationUnavailable as exc:
+            logger.error('Classification unavailable for email: %s', exc)
+            self._create_classification_failure_task(email, exc)
             return None
-        return self._process_one_email(email, classification)
+        self._record_debug_email(email, classification)
+        order = None
+        if classification != 'other':
+            order = self._process_one_email(email, classification)
+            if order:
+                self._link_debug_email(email.get('id', ''), order)
+        return order
 
     # ------------------------------------------------------------------
     # Internal pipeline
     # ------------------------------------------------------------------
+
+    def _record_debug_email(self, email: EmailMessage, classification: str) -> None:
+        """Snapshot a classified email for the debug mailbox (best-effort)."""
+        try:
+            from rfq.email_debug import record_processed_email
+            record_processed_email(email, classification, user=self._user)
+        except Exception:
+            logger.exception('Failed to record debug email snapshot')
+
+    def _link_debug_email(self, message_id: str, order: Order) -> None:
+        """Attach the produced order to the debug snapshot (best-effort)."""
+        try:
+            from rfq.models import ProcessedEmail
+            ProcessedEmail.objects.filter(
+                email_message_id=message_id,
+            ).update(order=order)
+        except Exception:
+            logger.exception('Failed to link order to debug email snapshot')
+
+    def _create_classification_failure_task(self, email: EmailMessage, exc: Exception) -> None:
+        """
+        Record a failed email classification as a pending Task so a human
+        can review it. Deduplicated by Outlook conversation ID.
+        """
+        conversation_id = email.get('conversation_id', '')
+        if not conversation_id:
+            logger.warning(
+                'No conversation ID on email %s; cannot deduplicate classification task',
+                email.get('id', ''),
+            )
+        try:
+            from tasks.models import Task
+            if conversation_id:
+                exists = Task.objects.filter(
+                    status='pending',
+                    description__contains=conversation_id,
+                ).exists()
+                if exists:
+                    logger.info(
+                        'Pending classification task already exists for conversation %s, skipping',
+                        conversation_id,
+                    )
+                    return
+            Task.objects.create(
+                title='RFQ classification failed — review email',
+                description=(
+                    f'Email classification failed for subject "{email.get("subject", "")}" '
+                    f'from {email.get("sender_email", "")}. '
+                    f'Conversation ID: {conversation_id}. Error: {exc}'
+                ),
+                status='pending',
+            )
+            logger.warning(
+                'Created classification-failure task for conversation %s', conversation_id,
+            )
+        except Exception as task_exc:
+            logger.error('Failed to create classification-failure task: %s', task_exc)
 
     def _find_order_for_quotation(self, email: EmailMessage) -> Optional[Order]:
         """
@@ -596,9 +290,9 @@ class EmailIngestionOrchestrator:
                 logger.info('Found recent Order %s matching company "%s" (fallback)', order.rfq_number, company_name)
                 return order
 
-        # Then try by sender email
+        # Then try by sender email matching contact
         recent_orders = Order.objects.filter(
-            email_sender=sender_email,
+            contact__email=sender_email,
             created_at__gte=thirty_days_ago,
         ).order_by('-created_at')
         
@@ -607,8 +301,8 @@ class EmailIngestionOrchestrator:
             logger.info('Found recent Order %s from sender %s (fallback match)', order.rfq_number, sender_email)
             return order
 
-        # Finally try by email_subject containing existing rfq_number
-        for o in Order.objects.filter(created_at__gte=thirty_days_ago).only('rfq_number', 'email_subject'):
+        # Finally try by rfq_number in subject
+        for o in Order.objects.filter(created_at__gte=thirty_days_ago).only('rfq_number'):
             if o.rfq_number and o.rfq_number.replace('RFQ-', '') in subject:
                 logger.info('Found Order %s by rfq_number in subject (fallback)', o.rfq_number)
                 return o
@@ -662,8 +356,7 @@ class EmailIngestionOrchestrator:
         if classification == 'po':
             order.type = 'purchase_order'
             order.stage = 'order'
-            order.status = 'processing'
-            order.save(update_fields=['type', 'stage', 'status'])
+            order.save(update_fields=['type', 'stage'])
             logger.info('Set order type to purchase_order for new PO email')
 
         handler = {
@@ -681,94 +374,167 @@ class EmailIngestionOrchestrator:
     # Per-classification handlers
     # ------------------------------------------------------------------
 
+    def _gather_attachments(
+        self,
+        email: EmailMessage,
+        order: Order,
+    ) -> tuple[str, List[Dict]]:
+        """
+        Inspect the email's attachments and prepare them for AI extraction.
+
+        - PDF / DOCX attachments are saved temporarily and their text is
+          extracted, so it can be fed to the AI alongside the email body.
+        - Image attachments are saved temporarily and returned as image
+          payloads (bytes + media type) so the AI can inspect them visually.
+
+        Returns ``(attachment_text, images)`` where ``images`` is a list of
+        ``{'data': bytes, 'media_type': str, 'path': str, 'name': str}``.
+        """
+        if not email.get('has_attachments') and not email.get('attachments'):
+            return '', []
+
+        msg_id = email.get('id', '')
+        attachments = email.get('attachments') or []
+
+        if not attachments and msg_id:
+            try:
+                attachments = self._email_provider.get_attachments(msg_id)
+            except Exception as exc:
+                logger.error(
+                    'Failed to fetch attachments for email %s: %s', msg_id, exc,
+                )
+                return '', []
+
+        if not attachments:
+            return '', []
+
+        text_parts: List[str] = []
+        images: List[Dict] = []
+
+        for att in attachments:
+            att_name = att.get('name', 'unnamed')
+            content_type = (att.get('content_type') or '').lower()
+            _, ext = os.path.splitext(att_name)
+            ext = ext.lower()
+
+            content = None
+            if msg_id and att.get('id'):
+                try:
+                    content = self._email_provider.download_attachment(
+                        msg_id, att['id'],
+                    )
+                except Exception as exc:
+                    logger.error(
+                        'Failed to download attachment %s: %s', att_name, exc,
+                    )
+            else:
+                content = att.get('content')
+
+            if not content:
+                logger.warning(
+                    'No content downloaded for attachment %s on email %s',
+                    att_name, msg_id,
+                )
+                continue
+
+            saved_path = self._attachment_service.save_temp(
+                order.id, att_name, content,
+            )
+
+            if ext in IMAGE_EXTENSIONS or content_type.startswith('image/'):
+                import mimetypes
+                media_type = content_type or mimetypes.guess_type(att_name)[0] or 'image/png'
+                images.append({
+                    'data': content,
+                    'media_type': media_type,
+                    'path': saved_path or '',
+                    'name': att_name,
+                })
+                logger.info(
+                    'Kept image attachment %s temporarily for Order %s',
+                    att_name, order.rfq_number,
+                )
+                continue
+
+            if ext in DOCUMENT_EXTENSIONS and saved_path:
+                from rfq.document_parsers import extract_text
+                doc_text = extract_text(saved_path)
+                if doc_text:
+                    text_parts.append(
+                        f'--- Attachment: {att_name} ---\n{doc_text}',
+                    )
+                    logger.info(
+                        'Extracted text from attachment %s for Order %s (%d chars)',
+                        att_name, order.rfq_number, len(doc_text),
+                    )
+                else:
+                    logger.warning(
+                        'No text extracted from attachment %s for Order %s',
+                        att_name, order.rfq_number,
+                    )
+            else:
+                logger.info(
+                    'Skipping unsupported attachment %s (type=%s) for Order %s',
+                    att_name, content_type, order.rfq_number,
+                )
+
+        return '\n\n'.join(text_parts), images
+
     def _handle_rfq_po(self, email: EmailMessage, order: Order) -> None:
         """
         Extract description, part number, quantity, delivery date
         from an RFQ email and save to the Order + OrderItem records.
         """
         text_to_extract = email.get('body', '')
+        images: List[Dict] = []
 
-        if email.get('has_attachments'):
-            attachments = self._email_provider.get_attachments(email['id'])
-            for att in attachments:
-                content = self._email_provider.download_attachment(
-                    email['id'], att['id'],
-                )
-                if content:
-                    saved = self._attachment_service.save_attachment(
-                        order, att, content,
-                    )
-                    if saved:
-                        file_text = extract_text(saved.file_path)
-                        if file_text:
-                            text_to_extract = file_text
-                            break
+        if email.get('has_attachments') or email.get('attachments'):
+            attachment_text, images = self._gather_attachments(email, order)
+            if attachment_text:
+                text_to_extract = f'{text_to_extract}\n\n{attachment_text}'
 
-        extracted = self._data_extractor.extract(text_to_extract)
-        if extracted is None:
-            extracted = self._fallback_extractor.extract(text_to_extract)
+        extracted = self._data_extractor.extract(
+            text_to_extract,
+            images=images or None,
+            order_id=order.id,
+        )
 
         if extracted:
             self._rfq_builder.update_from_extraction(order, extracted)
         else:
             logger.warning('Data extraction failed for Order %s', order.rfq_number)
 
-        if not order.supplier and not order.supplier_email:
-            try:
-                from tasks.services import TaskService
-                TaskService.create_supplier_assignment_task(order)
-            except Exception as exc:
-                logger.error(
-                    'Failed to create supplier-assignment task for Order %s: %s',
-                    order.rfq_number, exc,
-                )
-
-        bc_enabled = getattr(settings, 'BC_SYNC_ENABLED', True)
+        bc_enabled = getattr(settings, 'BC_SYNC_ENABLED', False)
         if bc_enabled:
             try:
                 from rfq.business_central import create_quotation_in_bc
                 result = create_quotation_in_bc(order)
-                if result:
-                    order.status = 'processing'
-                    order.save(update_fields=['status'])
             except Exception:
                 pass
 
         order.stage = 'inquiry'
         order.save(update_fields=['stage'])
 
-        if order.supplier_email or order.supplier:
-            from rfq.tasks import dispatch_to_supplier
-            dispatch_to_supplier.delay(order.id)
-
     def _handle_quotation(self, email: EmailMessage, order: Order) -> None:
         """
         Handle incoming supplier quotation.
         Extract item prices from email/attachment, match to RFQ items,
-        update OrderItem records with supplier prices, set stage to negotiation,
-        and send quotation email to customer.
+        update OrderItem records with supplier prices, set stage to negotiation.
         """
         text_to_extract = email.get('body', '')
+        images: List[Dict] = []
 
-        if email.get('has_attachments'):
-            attachments = self._email_provider.get_attachments(email['id'])
-            for att in attachments:
-                content = self._email_provider.download_attachment(
-                    email['id'], att['id'],
-                )
-                if content:
-                    saved = self._attachment_service.save_attachment(
-                        order, att, content,
-                    )
-                    if saved:
-                        file_text = extract_text(saved.file_path)
-                        if file_text:
-                            text_to_extract = file_text
-                            break
+        if email.get('has_attachments') or email.get('attachments'):
+            attachment_text, images = self._gather_attachments(email, order)
+            if attachment_text:
+                text_to_extract = f'{text_to_extract}\n\n{attachment_text}'
 
-        extracted = self._data_extractor.extract(text_to_extract, is_quotation=True)
-        if extracted is None:
-            extracted = self._fallback_extractor.extract(text_to_extract, is_quotation=True)
+        extracted = self._data_extractor.extract(
+            text_to_extract,
+            is_quotation=True,
+            images=images or None,
+            order_id=order.id,
+        )
 
         if not extracted or not extracted.get('items'):
             logger.warning('No items extracted from quotation for Order %s', order.rfq_number)
@@ -825,48 +591,13 @@ class EmailIngestionOrchestrator:
         else:
             logger.warning('No items were updated/created from quotation for Order %s', order.rfq_number)
 
-        try:
-            from rfq.business_central import create_quotation_in_bc
-            create_quotation_in_bc(order)
-        except Exception:
-            pass
-
-        try:
-            from rfq.email_service import CustomerQuotationService
-            from microsoft_auth.graph_api import GraphEmailProvider
-            from django.contrib.auth import get_user_model
-
-            # Check if quotation email has already been sent to avoid duplicates
-            if order.quotation_email_sent:
-                logger.info('Quotation email already sent for Order %s, skipping', order.rfq_number)
-                return
-
-            User = get_user_model()
-            user = User.objects.filter(microsoft_token__isnull=False).first()
-            if not user:
-                logger.warning('No user with Microsoft token available for sending quotation email')
-                return
-
-            token = user.microsoft_token
-            token.refresh_if_expired()
-            provider = GraphEmailProvider(
-                access_token=token.access_token,
-                refresh_token=token.refresh_token,
-                token_expires_at=token.token_expires_at,
-                user=user,
-            )
-
-            email_service = CustomerQuotationService(email_provider=provider)
-            result = email_service.send_quotation_to_customer(order)
-
-            if result['success']:
-                order.quotation_email_sent = True
-                order.save(update_fields=['quotation_email_sent'])
-                logger.info('Quotation email sent successfully for Order %s', order.rfq_number)
-            else:
-                logger.error('Failed to send quotation email to customer for Order %s: %s', order.rfq_number, result['message'])
-        except Exception as exc:
-            logger.error('Error sending quotation email to customer for Order %s: %s', order.rfq_number, exc)
+        bc_enabled = getattr(settings, 'BC_SYNC_ENABLED', False)
+        if bc_enabled:
+            try:
+                from rfq.business_central import create_quotation_in_bc
+                create_quotation_in_bc(order)
+            except Exception:
+                pass
 
     def _handle_po(self, email: EmailMessage, order: Order) -> None:
         """
@@ -875,6 +606,7 @@ class EmailIngestionOrchestrator:
         and create Purchase Order in Business Central.
         """
         text_to_extract = email.get('body', '')
+        images: List[Dict] = []
 
         po_number = None
         import re
@@ -882,25 +614,16 @@ class EmailIngestionOrchestrator:
         if po_match:
             po_number = po_match.group(1)
 
-        if email.get('has_attachments'):
-            attachments = self._email_provider.get_attachments(email['id'])
-            for att in attachments:
-                content = self._email_provider.download_attachment(
-                    email['id'], att['id'],
-                )
-                if content:
-                    saved = self._attachment_service.save_attachment(
-                        order, att, content,
-                    )
-                    if saved:
-                        file_text = extract_text(saved.file_path)
-                        if file_text:
-                            text_to_extract = file_text
-                            break
+        if email.get('has_attachments') or email.get('attachments'):
+            attachment_text, images = self._gather_attachments(email, order)
+            if attachment_text:
+                text_to_extract = f'{text_to_extract}\n\n{attachment_text}'
 
-        extracted = self._data_extractor.extract(text_to_extract)
-        if extracted is None:
-            extracted = self._fallback_extractor.extract(text_to_extract)
+        extracted = self._data_extractor.extract(
+            text_to_extract,
+            images=images or None,
+            order_id=order.id,
+        )
 
         if extracted:
             self._rfq_builder.update_from_extraction(order, extracted)
@@ -912,10 +635,9 @@ class EmailIngestionOrchestrator:
 
         order.type = 'purchase_order'
         order.stage = 'order'
-        order.status = 'processing'
-        order.save(update_fields=['type', 'stage', 'status', 'po_number'])
+        order.save(update_fields=['type', 'stage', 'po_number'])
 
-        bc_enabled = getattr(settings, 'BC_SYNC_ENABLED', True)
+        bc_enabled = getattr(settings, 'BC_SYNC_ENABLED', False)
         if bc_enabled:
             try:
                 from rfq.business_central import convert_quote_to_sales_order

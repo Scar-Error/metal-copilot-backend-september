@@ -50,6 +50,7 @@ def microsoft_login(request):
             scopes=MS_SCOPE,
             redirect_uri=MS_REDIRECT_URI,
             state=str(request.user.id),
+            prompt='select_account',
         )
         return Response({'success': True, 'auth_url': auth_url})
     except Exception as exc:

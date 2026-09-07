@@ -8,10 +8,35 @@ from django.utils import timezone
 
 from authentication.models import CustomUser
 from rfq.interfaces import EmailClassification, ExtractedRfqData
-from rfq.models import Order, OrderItem
+from rfq.models import Order, OrderItem, OrderAiMetadata
 from rfq.utils import generate_rfq_number
 
 logger = logging.getLogger(__name__)
+
+# Accepted item unit values (lowercase canonical form).
+ALLOWED_UNITS = ('pc', 'pcs', 'kg', 'ltr')
+DEFAULT_UNIT = 'pc'
+# Aliases mapped to their canonical unit (for robustness against AI output).
+UNIT_ALIASES = {
+    'pc': 'pc',
+    'pcs': 'pcs',
+    'piece': 'pc',
+    'pieces': 'pcs',
+    'kg': 'kg',
+    'kilogram': 'kg',
+    'kilograms': 'kg',
+    'kgs': 'kg',
+    'ltr': 'ltr',
+    'l': 'ltr',
+    'liter': 'ltr',
+    'litre': 'ltr',
+    'liters': 'ltr',
+    'litres': 'ltr',
+}
+# Max length for the 'Description' (part number) and 'Description 2' (name) item columns.
+ITEM_FIELD_MAX_LEN = 99
+# Marker used on spill-over items when a description exceeds ITEM_FIELD_MAX_LEN.
+COMMENT_ITEM_CODE = 'comment'
 
 
 class RfqBuilder:
@@ -26,8 +51,6 @@ class RfqBuilder:
         received_at: Optional[str],
         body: str,
         source: str = 'email',
-        email_message_id: str = '',
-        email_classification: EmailClassification = 'other',
     ) -> Order:
         """Create a minimal Order record from email metadata."""
         parsed_dt: datetime
@@ -41,21 +64,20 @@ class RfqBuilder:
         else:
             parsed_dt = timezone.now()
 
+        company = sender_name or sender_email.split('@')[0]
+
         order = Order.objects.create(
-            email_subject=subject,
-            email_sender=sender_email,
-            email_received_at=parsed_dt,
-            email_body=body,
             rfq_number=generate_rfq_number(),
-            company_name=sender_name or sender_email.split('@')[0],
-            status='pending',
-            stage='inquiry',
+            company_name=company,
             type='rfq',
-            priority='medium',
             source=source,
-            ai_processed=False,
-            email_message_id=email_message_id,
-            email_classification=email_classification,
+        )
+
+        # Create AI metadata
+        OrderAiMetadata.objects.create(
+            order=order,
+            processed=False,
+            classification='rfq',
         )
 
         # Auto-create or link contact
@@ -63,8 +85,8 @@ class RfqBuilder:
         contact, _ = Contact.objects.get_or_create(
             email=sender_email,
             defaults={
-                'company_name': sender_name or sender_email.split('@')[0],
-                'contact_person': sender_name or '',
+                'company_name': company,
+                'contact_person': sender_name,
                 'type': 'client',
             },
         )
@@ -82,8 +104,7 @@ class RfqBuilder:
         """Update an Order record with AI-extracted data (no pricing)."""
         order.company_name = data.get('company_name', order.company_name)
         order.items_description = data.get('description') or data.get('items_description', '')
-        
-        # Validate and convert quantity to number
+
         qty = data.get('quantity')
         try:
             if isinstance(qty, str):
@@ -97,9 +118,9 @@ class RfqBuilder:
                 data.get('quantity'), order.rfq_number
             )
         order.quantity = qty
-        
+
         order.specifications = data.get('specifications', '')
-        order.ai_confidence_score = data.get('confidence_score')
+        order.notes = data.get('notes') or order.notes or ''
 
         delivery = data.get('delivery_date')
         if delivery:
@@ -108,12 +129,16 @@ class RfqBuilder:
             except (ValueError, TypeError):
                 pass
 
-        order.ai_processed = True
         order.save(update_fields=[
             'company_name', 'items_description', 'quantity',
-            'specifications', 'delivery_date',
-            'ai_processed', 'ai_confidence_score',
+            'specifications', 'delivery_date', 'notes',
         ])
+
+        # Update AI metadata
+        ai_meta, _ = OrderAiMetadata.objects.get_or_create(order=order)
+        ai_meta.processed = True
+        ai_meta.confidence_score = data.get('confidence_score')
+        ai_meta.save(update_fields=['processed', 'confidence_score', 'updated_at'])
 
         self._create_items(order, data.get('items', []))
         logger.info(
@@ -123,13 +148,40 @@ class RfqBuilder:
         return order
 
     @staticmethod
-    def _create_items(order: Order, items: List[Dict[str, Any]]) -> None:
+    def _normalize_unit(unit: Any) -> str:
+        """Map a raw unit string to a canonical allowed value, else 'pc'."""
+        if not unit:
+            return DEFAULT_UNIT
+        normalized = str(unit).strip().lower()
+        return UNIT_ALIASES.get(normalized, DEFAULT_UNIT)
+
+    @staticmethod
+    def _split_long_description(text: str) -> List[str]:
+        """Break a description into at-most-99-char chunks ('' for empty text)."""
+        text = (text or '').strip()
+        if not text:
+            return ['']
+        return [
+            text[i:i + ITEM_FIELD_MAX_LEN]
+            for i in range(0, len(text), ITEM_FIELD_MAX_LEN)
+        ]
+
+    @classmethod
+    def _create_items(cls, order: Order, items: List[Dict[str, Any]]) -> None:
         for idx, item_data in enumerate(items):
-            # Validate and convert quantity to number
+            part = (
+                str(item_data.get('item_code') or item_data.get('part_number') or '').strip()
+            )[:ITEM_FIELD_MAX_LEN]
+            desc = (
+                item_data.get('name')
+                or item_data.get('item_name')
+                or item_data.get('description')
+                or ''
+            )
+
             qty = item_data.get('quantity', 1)
             try:
                 if isinstance(qty, str):
-                    # Try to convert string to number
                     qty = float(qty) if qty.replace('.', '', 1).isdigit() else 1
                 elif qty is None or qty == 0:
                     qty = 1
@@ -137,21 +189,24 @@ class RfqBuilder:
                 qty = 1
                 logger.warning(
                     'Invalid quantity "%s" for item %s, defaulting to 1',
-                    item_data.get('quantity'), item_data.get('description', f'Item {idx + 1}')
+                    item_data.get('quantity'), part or f'Item {idx + 1}'
                 )
 
-            unit = item_data.get('unit', 'PC')
-            if not unit or unit is None:
-                unit = 'PC'
+            unit = cls._normalize_unit(item_data.get('unit'))
 
-            OrderItem.objects.create(
-                order=order,
-                item_name=item_data.get('name') or item_data.get('description') or item_data.get('item_name', f'Item {idx + 1}'),
-                item_code=item_data.get('item_code') or item_data.get('part_number', ''),
-                description=item_data.get('description') or item_data.get('name', ''),
-                quantity=int(qty),
-                unit=unit,
-                unit_price=item_data.get('unit_price'),
-                total_price=item_data.get('total_price'),
-                extraction_confidence=item_data.get('confidence_score'),
-            )
+            # A description longer than 99 chars is continued on extra "comment"
+            # items ("Description 2" holds each remaining chunk).
+            chunks = cls._split_long_description(desc)
+            for ci, chunk in enumerate(chunks):
+                is_primary = ci == 0
+                OrderItem.objects.create(
+                    order=order,
+                    item_name=chunk,
+                    item_code=part if is_primary else COMMENT_ITEM_CODE,
+                    description=chunk,
+                    quantity=int(qty) if is_primary else 0,
+                    unit=unit if is_primary else '',
+                    unit_price=item_data.get('unit_price') if is_primary else None,
+                    total_price=item_data.get('total_price') if is_primary else None,
+                    extraction_confidence=item_data.get('confidence_score') if is_primary else None,
+                )

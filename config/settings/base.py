@@ -83,7 +83,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # ---------------------------------------------------------------------------
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Europe/Rome'
 USE_I18N = True
 USE_TZ = True
 
@@ -152,12 +152,27 @@ BC_SYNC_ENABLED = os.environ.get('BC_SYNC_ENABLED', 'False').lower() == 'true'
 # ---------------------------------------------------------------------------
 # AI
 # ---------------------------------------------------------------------------
+# AI provider switch: 'anthropic' (default) or 'openai'. Drives both the
+# client and the model used for classification + extraction.
+AI_PROVIDER = os.environ.get('AI_PROVIDER', 'anthropic').strip().lower()
+if AI_PROVIDER not in ('anthropic', 'openai'):
+    AI_PROVIDER = 'anthropic'
+
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-ANTHROPIC_MODEL = os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-4-6')
+
+# Models selected per provider (see rfq/ai_providers.py). Kept as settings so
+# they can be inspected/overridden without touching the provider module.
+ANTHROPIC_MODEL = os.environ.get('ANTHROPIC_MODEL', 'claude-haiku-4-5')
+OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-5.4-nano')
+
+# Stronger model used ONLY for the Round-2 image-details vision pass (small
+# nameplate/label text is read more reliably by a larger model).
+ANTHROPIC_VISION_MODEL = os.environ.get('ANTHROPIC_VISION_MODEL', 'claude-sonnet-4-6')
+OPENAI_VISION_MODEL = os.environ.get('OPENAI_VISION_MODEL', 'gpt-5.4-mini')
 
 # ---------------------------------------------------------------------------
-# Celery
+# Celery (background task broker — email pulls run off the request thread)
 # ---------------------------------------------------------------------------
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
@@ -165,6 +180,11 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+# Run tasks synchronously in-process (useful for local dev/tests without a worker).
+CELERY_TASK_ALWAYS_EAGER = os.environ.get('CELERY_TASK_ALWAYS_EAGER', 'false').lower() == 'true'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 660
+CELERY_TASK_SOFT_TIME_LIMIT = 600
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 # ---------------------------------------------------------------------------
@@ -185,48 +205,51 @@ LOGGING = {
         },
     },
     'handlers': {
+        'console_utf8': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'stream': 'ext://sys.stdout',
+            'formatter': 'bc_sync',
+        },
         'bc_sync': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
             'filename': BASE_DIR / 'logs' / 'bc_sync.log',
             'formatter': 'bc_sync',
+            'encoding': 'utf-8',
         },
         'email_polling': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
             'filename': BASE_DIR / 'logs' / 'email_polling.log',
             'formatter': 'bc_sync',
+            'encoding': 'utf-8',
         },
     },
     'loggers': {
         'bc_sync': {
-            'handlers': ['bc_sync'],
+            'handlers': ['bc_sync', 'console_utf8'],
             'level': 'INFO',
             'propagate': False,
         },
         'rfq': {
-            'handlers': ['email_polling'],
+            'handlers': ['email_polling', 'console_utf8'],
             'level': 'INFO',
             'propagate': False,
         },
         'microsoft_auth': {
-            'handlers': ['email_polling'],
+            'handlers': ['email_polling', 'console_utf8'],
             'level': 'INFO',
             'propagate': False,
         },
         'celery': {
-            'handlers': ['email_polling'],
+            'handlers': ['email_polling', 'console_utf8'],
             'level': 'INFO',
             'propagate': False,
         },
     },
+    'root': {
+        'handlers': ['console_utf8'],
+        'level': 'INFO',
+    },
 }
-
-# ---------------------------------------------------------------------------
-# RFQ-specific settings
-# ---------------------------------------------------------------------------
-RFQ_KEYWORDS = [
-    'RFQ', 'Request for Quotation', 'Quote Request',
-    'Inquiry', 'Price Request', 'Quotation',
-    'Request for Quote', 'Bid Request',
-]

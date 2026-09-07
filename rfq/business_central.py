@@ -8,14 +8,47 @@ import requests
 logger = logging.getLogger(__name__)
 bc_sync_logger = logging.getLogger('bc_sync')
 
+# Marker appended to BC customer names so they can be identified as created
+# by this system. Changed from 'Copilot' to 'Test' to indicate the source environment.
+CUSTOMER_NAME_SUFFIX = ' - Test'
+
 
 class BusinessCentralClient:
     """Client for interacting with Business Central API."""
 
     def __init__(self, access_token: str, odata_url: str = ''):
         self.access_token = access_token
-        self.base_url = settings.BC_API_URL
-        self.odata_url = odata_url or settings.BC_ODATA_URL or self.base_url.rstrip('/').rsplit('/api', 1)[0] + '/ODataV4'
+        # BC_API_URL may be the web client URL or the API URL.
+        # Normalize to the REST API base: https://api.businesscentral.dynamics.com/v2.0/{tenant}/{env}/api/v2.0
+        raw_url = settings.BC_API_URL.rstrip('/')
+        if 'api.businesscentral.dynamics.com' in raw_url and '/api/v2.0' in raw_url:
+            # Already the API URL
+            self.base_url = raw_url
+        elif 'businesscentral.dynamics.com' in raw_url:
+            # Convert web client URL to API URL
+            # e.g. https://businesscentral.dynamics.com/{tenant}/{env} -> https://api.businesscentral.dynamics.com/v2.0/{tenant}/{env}/api/v2.0
+            from urllib.parse import urlparse
+            parsed = urlparse(raw_url)
+            path_parts = parsed.path.strip('/').split('/')
+            # path_parts should be [tenant_id, environment_name]
+            if len(path_parts) >= 2:
+                tenant_id = path_parts[0]
+                environment = path_parts[1]
+                self.base_url = f'https://api.businesscentral.dynamics.com/v2.0/{tenant_id}/{environment}/api/v2.0'
+            else:
+                self.base_url = raw_url
+        else:
+            self.base_url = raw_url
+
+        # OData URL
+        if odata_url:
+            self.odata_url = odata_url
+        elif settings.BC_ODATA_URL:
+            self.odata_url = settings.BC_ODATA_URL
+        else:
+            # Derive OData URL from base_url
+            self.odata_url = self.base_url.replace('/api/v2.0', '/ODataV4') if '/api/v2.0' in self.base_url else self.base_url + '/ODataV4'
+
         self.headers = {
             'Authorization': f'Bearer {access_token}',
             'Content-Type': 'application/json',
@@ -368,20 +401,26 @@ def create_quotation_in_bc(order) -> bool:
                     bc_sync_logger.info('Accepted customer "%s": valid customerPostingGroup', bc_customer.get('displayName', ''))
                     break
 
-    if not bc_customer and order.email_sender:
-        try:
-            email_domain = order.email_sender.split('@')[1].split('.')[0]
-            bc_sync_logger.info('Searching customer: "%s" | Basis: email domain "%s"', order.company_name, email_domain)
-            bc_customer = client.get_customer_by_partial_match(company_id, email_domain)
-            if bc_customer:
-                bc_sync_logger.info('Found customer by email domain "%s": "%s" (%s)', email_domain, bc_customer.get('displayName', ''), bc_customer.get('number', ''))
-                if not client.verify_customer_posting_group(company_id, bc_customer['id'], bc_customer['number'], company_name):
-                    bc_sync_logger.info('Rejected customer "%s": missing or invalid customerPostingGroup', bc_customer.get('displayName', ''))
-                    bc_customer = None
-                else:
-                    bc_sync_logger.info('Accepted customer "%s": valid customerPostingGroup', bc_customer.get('displayName', ''))
-        except (IndexError, AttributeError):
-            pass
+    if not bc_customer:
+        email_sender = None
+        if hasattr(order, 'email_thread') and order.email_thread:
+            first_msg = order.email_thread.messages.order_by('received_at').first()
+            if first_msg:
+                email_sender = first_msg.sender_email
+        if email_sender:
+            try:
+                email_domain = email_sender.split('@')[1].split('.')[0]
+                bc_sync_logger.info('Searching customer: "%s" | Basis: email domain "%s"', order.company_name, email_domain)
+                bc_customer = client.get_customer_by_partial_match(company_id, email_domain)
+                if bc_customer:
+                    bc_sync_logger.info('Found customer by email domain "%s": "%s" (%s)', email_domain, bc_customer.get('displayName', ''), bc_customer.get('number', ''))
+                    if not client.verify_customer_posting_group(company_id, bc_customer['id'], bc_customer['number'], company_name):
+                        bc_sync_logger.info('Rejected customer "%s": missing or invalid customerPostingGroup', bc_customer.get('displayName', ''))
+                        bc_customer = None
+                    else:
+                        bc_sync_logger.info('Accepted customer "%s": valid customerPostingGroup', bc_customer.get('displayName', ''))
+            except (IndexError, AttributeError):
+                pass
 
     if not bc_customer:
         bc_sync_logger.info('Searching customer: "%s" | Basis: fallback (any customer with posting group)', order.company_name)
@@ -418,9 +457,12 @@ def create_quotation_in_bc(order) -> bool:
     try:
         result = client.create_sales_quote(company_id, quote_data)
         if result:
-            order.bc_quote_id = result.get('id')
-            order.bc_synced_at = timezone.now()
-            order.save(update_fields=['bc_quote_id', 'bc_synced_at'])
+            from rfq.models import OrderBusinessCentral
+            bc_data, _ = OrderBusinessCentral.objects.get_or_create(order=order)
+            bc_data.quote_id = result.get('id')
+            bc_data.synced = True
+            bc_data.synced_at = timezone.now()
+            bc_data.save()
             return True
         else:
             logger.error('Failed to create BC sales quote for order %s', order.rfq_number)
@@ -432,7 +474,9 @@ def create_quotation_in_bc(order) -> bool:
 
 def convert_quote_to_sales_order(order) -> bool:
     """Convert a Sales Quote to a Sales Order in BC from an Order record."""
-    if not order.bc_quote_id:
+    from rfq.models import OrderBusinessCentral
+    bc_data = OrderBusinessCentral.objects.filter(order=order).first()
+    if not bc_data or not bc_data.quote_id:
         logger.error('Order %s has no BC quote ID to convert', order.rfq_number)
         return False
 
@@ -467,13 +511,13 @@ def convert_quote_to_sales_order(order) -> bool:
 
     try:
         result = client._post(
-            f'companies({company_id})/salesQuotes({order.bc_quote_id})/makeSalesOrder',
+            f'companies({company_id})/salesQuotes({bc_data.quote_id})/makeSalesOrder',
             {}
         )
         if result:
-            order.bc_sales_order_id = result.get('id')
-            order.bc_sales_order_number = result.get('number')
-            order.save(update_fields=['bc_sales_order_id', 'bc_sales_order_number'])
+            bc_data.sales_order_id = result.get('id')
+            bc_data.sales_order_number = result.get('number')
+            bc_data.save()
             return True
         else:
             logger.error('Failed to convert BC quote to Sales Order for order %s', order.rfq_number)
@@ -515,7 +559,6 @@ def create_purchase_order_in_bc(order) -> bool:
         return False
 
     po_data: Dict[str, Any] = {
-        'buyFromVendorNumber': order.supplier.company_name if order.supplier else '',
         'documentDate': order.created_at.strftime('%Y-%m-%d'),
         'currencyCode': 'EUR',
     }
