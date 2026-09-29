@@ -551,7 +551,7 @@ class TestAttachmentProcessing:
             assert result['processed'] == 1
             mock_bc.assert_called_once()
 
-    @pytest.mark.django_db
+@pytest.mark.django_db
 class TestDebugEmailMailbox:
     def test_poll_records_processed_email_snapshot(self) -> None:
         provider = FakeEmailProvider()

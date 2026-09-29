@@ -162,6 +162,24 @@ class EmailMessageSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class EmailMessageTagSerializer(serializers.ModelSerializer):
+    """Per-message tag for the board, without the body.
+
+    `EmailMessageSerializer` is right for the thread detail view but wrong for the
+    board: `body` is a large HTML blob, and there can be hundreds of messages
+    across the threads on screen. The tag itself is a few bytes, so the board can
+    afford to carry every message's category and still stay small.
+    """
+
+    class Meta:
+        model = EmailMessage
+        fields = [
+            'id', 'message_id', 'subject', 'sender_name', 'sender_email',
+            'received_at', 'has_attachments', 'category',
+        ]
+        read_only_fields = fields
+
+
 class DealDetailSerializer(serializers.ModelSerializer):
     number = serializers.CharField(source='rfq_number')
     company = serializers.CharField(source='company_name')
@@ -196,7 +214,44 @@ class RfqDetailSerializer(serializers.ModelSerializer):
         ]
 
 
-class EmailThreadSerializer(serializers.ModelSerializer):
+class EmailThreadListSerializer(serializers.ModelSerializer):
+    """Lightweight payload for the Kanban board list request.
+
+    Carries `messages` as tags only (see EmailMessageTagSerializer), so a card
+    can show what kind of email each individual message in the thread is. The
+    bodies are omitted because they are large HTML blobs and there can be
+    hundreds of messages across the threads on screen; the full message data
+    comes from the detail request (EmailThreadDetailSerializer) when the user
+    opens a thread.
+
+    `last_sender_name` / `last_sender_email` are annotated onto the queryset by
+    EmailThreadViewSet, so the card can show who sent the most recent message
+    without pulling every message body (and without an N+1 query per thread).
+    """
+
+    orders = RfqDetailSerializer(many=True, read_only=True)
+    messages = EmailMessageTagSerializer(many=True, read_only=True)
+    last_sender_name = serializers.CharField(read_only=True, allow_null=True, required=False)
+    last_sender_email = serializers.CharField(read_only=True, allow_null=True, required=False)
+
+    class Meta:
+        model = EmailThread
+        fields = [
+            'id', 'conversation_id', 'subject', 'message_count',
+            'last_message_at', 'category', 'stage', 'user',
+            'orders', 'messages', 'last_sender_name', 'last_sender_email',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'message_count', 'category', 'created_at', 'updated_at']
+
+
+class EmailThreadDetailSerializer(serializers.ModelSerializer):
+    """Full thread payload, including message bodies.
+
+    Only returned by the detail request (GET /api/rfq/email-threads/<id>/) so the
+    large `body` fields are never sent as part of the board's list response.
+    """
+
     messages = EmailMessageSerializer(many=True, read_only=True)
     orders = RfqDetailSerializer(many=True, read_only=True)
 

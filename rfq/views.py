@@ -5,17 +5,18 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Q, OuterRef, Subquery
 from django.utils import timezone
 
-from rfq.models import Order, OrderItem, OrderAiMetadata, EmailThread
+from rfq.models import Order, OrderItem, OrderAiMetadata, EmailThread, EmailMessage
 from rfq.serializers import (
     OrderSerializer,
     OrderListSerializer,
     OrderItemSerializer,
     OrderAnalyticsSerializer,
     DealSerializer,
-    EmailThreadSerializer,
+    EmailThreadListSerializer,
+    EmailThreadDetailSerializer,
 )
 from rfq.analytics_service import compute_analytics, dashboard_stats
 from rfq.ai_usage import ai_usage_stats
@@ -217,17 +218,84 @@ class DealViewSet(viewsets.ModelViewSet):
 
 
 class EmailThreadViewSet(viewsets.ModelViewSet):
+    # `list` (the Kanban board load) uses the lightweight serializer and NEVER
+    # includes message bodies; `retrieve` uses the detail serializer and DOES
+    # include them. See get_serializer_class below.
     queryset = EmailThread.objects.all()
-    serializer_class = EmailThreadSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = None
+
+    def get_serializer_class(self):
+        # self.action is set by the ViewSet to the current method name, so the
+        # board's list request ('list') and the per-thread retrieve ('retrieve')
+        # can return different shapes.
+        if self.action == 'list':
+            return EmailThreadListSerializer
+        return EmailThreadDetailSerializer
 
     def get_queryset(self):
         qs = EmailThread.objects.all()
         user_param = self.request.query_params.get('user_id')
         if user_param:
             qs = qs.filter(user_id=user_param)
+
+        # A thread lives in exactly one column, so the board filters on `stage`:
+        #   ?stage=synced      -> the Synced column
+        #   ?stage=categorized -> the Categorized column
+        stage_param = self.request.query_params.get('stage')
+        if stage_param:
+            qs = qs.filter(stage=stage_param)
+
+        # The list payload needs the most recent sender for the card. Annotate it
+        # with a subquery instead of serializing every message body (the old
+        # behaviour), which keeps the board request small and avoids N+1 queries.
+        latest_message = EmailMessage.objects.filter(thread=OuterRef('pk')).order_by('-received_at')
+        qs = qs.annotate(
+            last_sender_name=Subquery(latest_message.values('sender_name')[:1]),
+            last_sender_email=Subquery(latest_message.values('sender_email')[:1]),
+        )
+
+        # Prefetch instead of letting the nested serializers query per parent row.
+        # 'messages' is needed by both requests: the board serializes each
+        # message's tag, and the detail request adds the bodies. Only the
+        # columns differ, so the prefetch is the same either way.
+        qs = qs.prefetch_related('orders__items', 'messages')
         return qs
+
+    @action(detail=False, methods=['post'])
+    def bulk_delete(self, request):
+        """Bulk delete multiple email threads by IDs.
+
+        Route is /api/rfq/email-threads/bulk_delete/ (DRF uses the method name as
+        the url_path, so it is an underscore, not a dash).
+
+        Deleting a thread also deletes its EmailMessage rows (CASCADE), so this is
+        destructive and irreversible. Linked Orders are NOT deleted: Order.email_thread
+        is SET_NULL, so the order survives and simply loses its thread link.
+        """
+        ids = request.data.get('ids', [])
+        if not ids:
+            return Response(
+                {'error': 'No IDs provided'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Ignore IDs that don't exist or belong to another user, so the count
+        # reported back only includes rows this request actually removed.
+        deletable = EmailThread.objects.filter(id__in=ids)
+        user_param = self.request.query_params.get('user_id')
+        if user_param:
+            deletable = deletable.filter(user_id=user_param)
+
+        deleted_count = deletable.count()
+        deletable.delete()
+
+        logger.info('Bulk deleted %d email thread(s)', deleted_count)
+
+        return Response({
+            'message': f'{deleted_count} thread(s) deleted successfully',
+            'deleted_count': deleted_count,
+        })
 
     @action(detail=True, methods=['post'])
     def categorize(self, request, pk=None):
@@ -237,6 +305,7 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
             return Response({'error': 'No messages in thread'}, status=400)
 
         from rfq.ai_classifier import AiEmailClassifier, ClassificationUnavailable
+        from rfq.email_categories import DEFAULT_CATEGORY, normalize_category
 
         try:
             classifier = AiEmailClassifier()
@@ -244,10 +313,10 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
             logger.warning('AI provider unavailable: %s', exc)
             classifier = None
 
-        PRIORITY = {'po': 4, 'quotation': 3, 'rfq': 2, 'other': 1}
-        best_category = 'other'
-        best_priority = 0
+        message_categories = []
 
+        # Every message is analyzed, old and new alike, so each one carries its
+        # own tag regardless of when it was pulled from Outlook.
         for msg in messages:
             email_data = {
                 'id': msg.message_id,
@@ -265,24 +334,38 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
                 try:
                     category = classifier.classify(email_data)
                 except ClassificationUnavailable:
-                    category = 'other'
+                    category = DEFAULT_CATEGORY
                 except Exception as exc:
                     logger.warning('Classification failed for message %s: %s', msg.message_id, exc)
-                    category = 'other'
+                    category = DEFAULT_CATEGORY
             else:
-                category = 'other'
+                category = DEFAULT_CATEGORY
+
+            category = normalize_category(category)
 
             msg.category = category
             msg.save(update_fields=['category'])
+            message_categories.append(category)
 
-            cat_priority = PRIORITY.get(category, 0)
-            if cat_priority > best_priority:
-                best_priority = cat_priority
-                best_category = category
-
-        thread.category = best_category
+        # The thread tag is always derived from the per-message tags above, so a
+        # thread containing both an RFQ and a PO reads as a PO. Deriving it in
+        # one place keeps this endpoint and the repair command in agreement.
+        # Analysis is what moves the thread onto the board, from Synced to
+        # Categorized, where it shows its tags.
+        best_category = thread.recompute_category(save=False)
         thread.stage = 'categorized'
         thread.save(update_fields=['category', 'stage', 'updated_at'])
+
+        logger.info(
+            'Thread %s tagged %s (messages: %s)',
+            thread.conversation_id,
+            best_category,
+            message_categories,
+        )
+
+        # stage is intentionally left alone. Advancing it to 'categorized'
+        # would pull the thread out of the board's Synced column, and the
+        # category tag above is what actually conveys the result.
 
         # Find or create the linked Order
         existing_order = Order.objects.filter(email_thread=thread).first()
@@ -535,24 +618,17 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
                 logger.warning('Item extraction failed for thread %s: %s', pk, exc)
 
         # Create contacts from thread senders (skip internal @corimetal.it)
+        #
+        # IMPORTANT: this only writes to the LOCAL database. Categorization is an
+        # analysis step, so it must never create customers in Business Central —
+        # doing that automatically pushed junk records into BC every time a thread
+        # entered the "AI Analysis" column. BC sync is deliberately NOT done here.
+        # To push a contact to BC it has to be an explicit, user-initiated action
+        # via the contacts endpoint: POST /api/contacts/<id>/sync_bc/
+        # (ContactViewSet.sync_bc, used by the "Sync to BC" button on the Contacts page).
         from contacts.models import Contact
-        from rfq.business_central import build_bc_client_for_user, BusinessCentralClient, CUSTOMER_NAME_SUFFIX
         seen_emails = set()
         contacts_created = 0
-        bc_customers_created = 0
-
-        # Build BC client once (if available)
-        bc_client = None
-        bc_company_id = None
-        try:
-            bc_client = build_bc_client_for_user(thread.user or request.user)
-            if bc_client:
-                bc_company_id = bc_client.get_company_by_name(settings.BC_COMPANY_NAME)
-                if not bc_company_id:
-                    logger.warning('BC company "%s" not found, skipping BC customer creation', settings.BC_COMPANY_NAME)
-                    bc_client = None
-        except Exception as exc:
-            logger.warning('Failed to init BC client for contact creation: %s', exc)
 
         for msg in messages:
             sender_email = (msg.sender_email or '').strip().lower()
@@ -577,30 +653,24 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
                 contacts_created += 1
                 logger.info('Created contact: %s <%s>', sender_name, sender_email)
 
-            # Create customer in BC
-            if bc_client and bc_company_id:
-                try:
-                    bc_result = bc_client.create_customer(
-                        company_id=bc_company_id,
-                        customer_name=f'{contact_name}{CUSTOMER_NAME_SUFFIX}',
-                        email=sender_email,
-                    )
-                    if bc_result:
-                        bc_customers_created += 1
-                        logger.info('Created BC customer: %s', contact_name)
-                except Exception as exc:
-                    logger.warning('Failed to create BC customer for %s: %s', contact_name, exc)
-
         if contacts_created:
             logger.info('Created %d new contacts from thread %s', contacts_created, thread.conversation_id[-16:])
-        if bc_customers_created:
-            logger.info('Created %d new BC customers from thread %s', bc_customers_created, thread.conversation_id[-16:])
 
         return Response({
             'id': thread.id,
             'conversation_id': thread.conversation_id,
             'category': best_category,
+            # Echoed back so the UI can badge each message straight from this
+            # response instead of re-fetching the thread.
+            'messages': [
+                {
+                    'id': msg.id,
+                    'message_id': msg.message_id,
+                    'category': msg.category,
+                }
+                for msg in messages
+            ],
             'order_id': rfq_order.id,
             'contacts_created': contacts_created,
-            'bc_customers_created': bc_customers_created,
+            # No bc_customers_created: this endpoint no longer writes to BC.
         })

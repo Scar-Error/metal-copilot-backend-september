@@ -1,6 +1,8 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 
+from rfq.email_categories import EMAIL_CATEGORY_CHOICES, resolve_thread_category
+
 User = get_user_model()
 
 
@@ -258,7 +260,20 @@ class EmailThread(models.Model):
         null=True, blank=True,
         related_name='email_threads',
     )
-    category = models.CharField(max_length=20, blank=True, default='')
+    # Highest-priority tag across the thread's messages. See
+    # rfq.email_categories for the ladder.
+    #
+    # Only ever written by the categorize endpoint, on a thread that has just
+    # been analyzed. A thread waiting in the Synced column has no tag yet.
+    category = models.CharField(
+        max_length=20,
+        choices=EMAIL_CATEGORY_CHOICES,
+        blank=True,
+        default='',
+    )
+    # A thread sits in the Synced column until it has been analyzed, then moves
+    # to Categorized where it shows its tags. Analysis is the only thing that
+    # moves a thread, and it only ever moves it forward.
     stage = models.CharField(max_length=20, choices=STAGE_CHOICES, default='synced')
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -274,6 +289,33 @@ class EmailThread(models.Model):
 
     def __str__(self):
         return f"{self.subject[:80]} ({self.message_count} messages)"
+
+    def recompute_category(self, save=True):
+        """Derive this thread's tag from the tags on its individual messages.
+
+        The thread tag is never set independently: it is always the
+        highest-priority tag present among the thread's messages, so a thread
+        holding both an RFQ and a PO reads as a PO. Keeping that derivation in
+        one place means the categorize endpoint and the repair command can never
+        disagree about what a thread should be tagged.
+
+        Returns the resolved tag, or ``None`` when no message has been analyzed
+        yet. An untagged thread stays untagged rather than defaulting to
+        ``other``, so the board can tell "not analyzed" apart from "analyzed
+        and found nothing actionable".
+        """
+        tags = [
+            tag
+            for tag in self.messages.values_list('category', flat=True)
+            if tag
+        ]
+        if not tags:
+            return None
+
+        self.category = resolve_thread_category(tags)
+        if save:
+            self.save(update_fields=['category', 'updated_at'])
+        return self.category
 
 
 class EmailMessage(models.Model):
@@ -292,7 +334,13 @@ class EmailMessage(models.Model):
     body = models.TextField(blank=True)
     body_preview = models.CharField(max_length=500, blank=True)
     has_attachments = models.BooleanField(default=False)
-    category = models.CharField(max_length=20, blank=True, default='')
+    # This message's own tag from the AI classifier, independent of the thread.
+    category = models.CharField(
+        max_length=20,
+        choices=EMAIL_CATEGORY_CHOICES,
+        blank=True,
+        default='',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -309,12 +357,7 @@ class EmailMessage(models.Model):
 class ProcessedEmail(models.Model):
     """Debug snapshot of an email processed from Outlook."""
 
-    EMAIL_CLASSIFICATION_CHOICES = [
-        ('rfq', 'RFQ'),
-        ('po', 'PO'),
-        ('quotation', 'Quotation'),
-        ('other', 'Other'),
-    ]
+    EMAIL_CLASSIFICATION_CHOICES = EMAIL_CATEGORY_CHOICES
 
     email_message_id = models.CharField(max_length=500, unique=True)
     conversation_id = models.CharField(max_length=500, blank=True, db_index=True)
