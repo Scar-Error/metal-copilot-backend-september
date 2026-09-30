@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 import msal
 import requests
@@ -26,7 +27,8 @@ MS_REDIRECT_URI = getattr(
     'MICROSOFT_REDIRECT_URI',
     'http://localhost:8000/api/auth/microsoft/callback/',
 )
-FRONTEND_URL = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+FRONTEND_URL = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173').rstrip('/')
+SUCCESS_PATH = getattr(settings, 'MICROSOFT_SUCCESS_REDIRECT_PATH', '/auth/callback')
 
 
 def _msal_app():
@@ -64,20 +66,20 @@ def microsoft_callback(request):
     error = request.GET.get('error')
     if error:
         logger.error('Microsoft OAuth error: %s', error)
-        return _redirect(f'/auth/callback?error={error}')
+        return _redirect(f'{SUCCESS_PATH}?error={error}')
 
     code = request.GET.get('code')
     if not code:
-        return _redirect('/auth/callback?error=no_code')
+        return _redirect(f'{SUCCESS_PATH}?error=no_code')
 
     state = request.GET.get('state')
     if not state:
-        return _redirect('/auth/callback?error=no_state')
+        return _redirect(f'{SUCCESS_PATH}?error=no_state')
 
     try:
         user = User.objects.get(id=state)
     except (User.DoesNotExist, ValueError):
-        return _redirect('/auth/callback?error=invalid_state')
+        return _redirect(f'{SUCCESS_PATH}?error=invalid_state')
 
     try:
         app = _msal_app()
@@ -90,21 +92,20 @@ def microsoft_callback(request):
         if 'error' in token_result:
             desc = token_result.get('error_description', 'unknown')
             logger.error('Token acquisition error: %s', desc)
-            return _redirect('/auth/callback?error=token_failed')
+            return _redirect(f'{SUCCESS_PATH}?error=token_failed')
 
         access_token = token_result.get('access_token')
         user_info = _get_user_info(access_token)
         if not user_info:
-            return _redirect('/auth/callback?error=user_info_failed')
+            return _redirect(f'{SUCCESS_PATH}?error=user_info_failed')
 
         _connect_ms_token(user, user_info, token_result)
 
         ms_email = _clean_ms_email(user_info)
-        from urllib.parse import quote
-        return _redirect(f'/auth/callback?status=success&email={quote(ms_email)}')
+        return _redirect(f'{SUCCESS_PATH}?status=success&email={quote(ms_email)}')
     except Exception as exc:
         logger.exception('Microsoft callback error')
-        return _redirect(f'/auth/callback?error={str(exc)}')
+        return _redirect(f'{SUCCESS_PATH}?error={quote(str(exc))}')
 
 
 @api_view(['POST'])

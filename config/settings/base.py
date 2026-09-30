@@ -135,11 +135,23 @@ MICROSOFT_CLIENT_ID = os.environ.get('MICROSOFT_CLIENT_ID', '')
 MICROSOFT_CLIENT_SECRET = os.environ.get('MICROSOFT_CLIENT_SECRET', '')
 MICROSOFT_TENANT_ID = os.environ.get('MICROSOFT_TENANT_ID', 'common')
 MICROSOFT_GRAPH_API_URL = 'https://graph.microsoft.com/v1.0'
+# Where Microsoft sends the browser once the user finishes linking. This MUST be
+# the BACKEND url, and it must match a redirect URI registered on the Azure app.
 MICROSOFT_REDIRECT_URI = os.environ.get(
     'MICROSOFT_REDIRECT_URI',
     'http://localhost:8000/api/auth/microsoft/callback/',
 )
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
+
+# Where the backend redirects the browser AFTER the token is stored. This is the
+# FRONTEND url, not the backend one. The path is appended, so a trailing slash
+# here would produce '//auth/callback'.
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
+
+# Frontend route the callback lands on.
+MICROSOFT_SUCCESS_REDIRECT_PATH = os.environ.get(
+    'MICROSOFT_SUCCESS_REDIRECT_PATH',
+    '/auth/callback',
+)
 
 # ---------------------------------------------------------------------------
 # Business Central
