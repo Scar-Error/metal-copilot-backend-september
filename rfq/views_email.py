@@ -1,5 +1,7 @@
+import json
 import logging
 
+from django.core.serializers.json import DjangoJSONEncoder
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -81,10 +83,19 @@ def get_task_status(request, task_id):
     data = {
         'task_id': task_id,
         'status': task.status,
-        'result': task.result if task.ready() else None,
+        'result': None,
     }
-    if task.failed():
-        data['error'] = str(task.result)
+    if task.ready():
+        if task.failed():
+            error = str(task.result)
+            data['error'] = error
+            data['result'] = {'success': False, 'error': error}
+        elif task.successful():
+            # Celery's JSON result backend decodes back into datetimes/Decimals,
+            # which DRF's encoder cannot render. Normalize to JSON-safe types.
+            data['result'] = json.loads(
+                json.dumps(task.result, cls=DjangoJSONEncoder)
+            )
     return Response(data)
 
 

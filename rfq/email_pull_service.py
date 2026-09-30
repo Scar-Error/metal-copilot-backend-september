@@ -195,7 +195,9 @@ def pull_emails_for_user(user, start_iso, end_iso):
             'conversation_id': thread.conversation_id,
             'subject': thread.subject,
             'message_count': thread.message_count,
-            'last_message_at': thread.last_message_at,
+            'last_message_at': (
+                thread.last_message_at.isoformat() if thread.last_message_at else None
+            ),
         })
 
     logger.info('Pull emails: done — created=%d updated=%d messages_added=%d', threads_created, threads_updated, messages_created)
