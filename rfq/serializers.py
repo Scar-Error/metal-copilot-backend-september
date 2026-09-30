@@ -95,12 +95,20 @@ class OrderSerializer(serializers.ModelSerializer):
 
 class OrderListSerializer(serializers.ModelSerializer):
     items_count = serializers.SerializerMethodField()
+    # The tag the AI gave the thread this order came from. The RFQ page and the
+    # Purchase Orders page are both views of that tag (see
+    # rfq.views.filter_by_thread_tag), so the row shows it too. Null for an order
+    # with no thread behind it — a manually created deal, or anything built by
+    # the older ingestion path that never went through the pipeline.
+    thread_category = serializers.CharField(
+        source='email_thread.category', read_only=True, default=None,
+    )
 
     class Meta:
         model = Order
         fields = [
-            'id', 'type', 'rfq_number', 'company_name',
-            'source', 'items_count',
+            'id', 'type', 'rfq_number', 'po_number', 'company_name',
+            'source', 'items_count', 'thread_category', 'created_at',
         ]
 
     def get_items_count(self, obj):

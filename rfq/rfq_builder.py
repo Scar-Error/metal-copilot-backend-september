@@ -80,18 +80,18 @@ class RfqBuilder:
             classification='rfq',
         )
 
-        # Auto-create or link contact
-        from contacts.models import Contact
-        contact, _ = Contact.objects.get_or_create(
+        # Auto-create or link contact. The contact's company name and phone
+        # number come from the email address and the signature, not from the
+        # order, and an existing contact is never overwritten.
+        from contacts.utils import upsert_contact_from_email
+        contact, _ = upsert_contact_from_email(
             email=sender_email,
-            defaults={
-                'company_name': company,
-                'contact_person': sender_name,
-                'type': 'client',
-            },
+            sender_name=sender_name,
+            body=body,
         )
-        order.contact = contact
-        order.save(update_fields=['contact'])
+        if contact is not None:
+            order.contact = contact
+            order.save(update_fields=['contact'])
 
         logger.info('Created Order %s from email', order.rfq_number)
         return order

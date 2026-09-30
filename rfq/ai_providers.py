@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import logging
 from typing import List, Optional
 
@@ -18,13 +19,37 @@ AI_PROVIDER_MODELS = {
 _PLACEHOLDER = {'', '***'}
 
 
+def _is_placeholder(value: str) -> bool:
+    """True when a settings value is still the .env.example placeholder.
+
+    A key copied straight from .env.example reads as "***", which is truthy, so
+    a plain `if not key` check let the app fire requests that could only come
+    back 401 — every AI call failed, nothing was recorded, and the reason never
+    surfaced. Treating the placeholder as unset turns that into the explicit
+    "not configured" the UI can report.
+    """
+    return (value or '').strip() in _PLACEHOLDER
+
+
 class AIProviderUnavailable(Exception):
     """Raised when the configured AI provider cannot be initialised."""
 
 
+def _accepts_parameter(func, name: str) -> bool:
+    """Whether the installed SDK takes `name` as a keyword argument.
+
+    Providers check before sending an optional argument, because passing one an
+    installed SDK does not know raises TypeError before the request is even sent.
+    """
+    try:
+        return name in inspect.signature(func).parameters
+    except (TypeError, ValueError):  # pragma: no cover - builtins/C callables
+        return False
+
+
 def _resolved_model(env_value: str, provider_name: str) -> str:
     """Pick a model, ignoring empty/placeholder env values."""
-    if env_value not in _PLACEHOLDER:
+    if not _is_placeholder(env_value):
         return env_value
     return AI_PROVIDER_MODELS.get(provider_name, AI_PROVIDER_MODELS['anthropic'])
 
@@ -46,7 +71,7 @@ class AnthropicProvider:
         self._client = client
         if self._client is not None:
             return
-        if not settings.ANTHROPIC_API_KEY:
+        if _is_placeholder(getattr(settings, 'ANTHROPIC_API_KEY', '')):
             logger.error('ANTHROPIC_API_KEY is not configured; AI unavailable')
             raise AIProviderUnavailable('ANTHROPIC_API_KEY is not configured')
         try:
@@ -106,12 +131,24 @@ class AnthropicProvider:
             logger.info('Anthropic: sending text-only request (1 text block), model=%s', model)
             _log_subject(subject)
 
-        response = self._client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            messages=[{'role': 'user', 'content': content}],
-        )
+        kwargs: dict = {
+            'model': model,
+            'max_tokens': max_tokens,
+            'messages': [{'role': 'user', 'content': content}],
+        }
+        # anthropic>=1.8 dropped `temperature` from messages.create(). Sending it
+        # anyway raises TypeError before the request leaves the process, which
+        # failed every AI call — and so every usage record — while the pipeline
+        # quietly carried on. Pass it only when it differs from the API default
+        # (0), going through extra_body when the installed SDK has no named
+        # parameter for it.
+        if temperature:
+            if _accepts_parameter(self._client.messages.create, 'temperature'):
+                kwargs['temperature'] = temperature
+            else:
+                kwargs['extra_body'] = {'temperature': temperature}
+
+        response = self._client.messages.create(**kwargs)
         usage = getattr(response, 'usage', None)
         if usage is not None:
             logger.info(
@@ -156,7 +193,7 @@ class OpenAIProvider:
         self._client = client
         if self._client is not None:
             return
-        if not settings.OPENAI_API_KEY:
+        if _is_placeholder(getattr(settings, 'OPENAI_API_KEY', '')):
             logger.error('OPENAI_API_KEY is not configured; AI unavailable')
             raise AIProviderUnavailable('OPENAI_API_KEY is not configured')
         try:

@@ -120,3 +120,135 @@ class TestProviderUsageCapture:
         assert record.input_tokens == 1000
         assert record.output_tokens == 200
         assert record.total_cost > 0
+
+
+@pytest.mark.django_db
+class TestAnthropicRequestCompatibility:
+    """Anthropic 1.8 dropped `temperature` from messages.create().
+
+    Passing it anyway raises TypeError before the request is sent, so every
+    Anthropic call died, no usage was ever recorded, and the dashboard graphs
+    stayed frozen while the pipeline quietly tagged everything `other`. The
+    provider has to send only what the installed SDK accepts, and still record
+    the usage of a call that goes through.
+    """
+
+    @staticmethod
+    def _client(accepts_temperature: bool):
+        """A client whose create() mimics the two SDK generations."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        sent: list[dict] = []
+        response = MagicMock()
+        block = MagicMock()
+        block.text = 'OK'
+        response.content = [block]
+        response.usage.input_tokens = 100
+        response.usage.output_tokens = 20
+
+        if accepts_temperature:
+            def create(model, max_tokens, messages, temperature=0):
+                sent.append({
+                    'model': model, 'max_tokens': max_tokens,
+                    'messages': messages, 'temperature': temperature,
+                })
+                return response
+        else:
+            def create(model, max_tokens, messages, extra_body=None):
+                sent.append({
+                    'model': model, 'max_tokens': max_tokens,
+                    'messages': messages, 'extra_body': extra_body,
+                })
+                return response
+
+        return SimpleNamespace(messages=SimpleNamespace(create=create)), sent
+
+    @staticmethod
+    def _provider(client):
+        from rfq.ai_providers import AnthropicProvider
+
+        provider = AnthropicProvider.__new__(AnthropicProvider)
+        provider.name = 'anthropic'
+        provider.model = 'claude-haiku-4-5'
+        provider._client = client
+        return provider
+
+    def test_modern_sdk_gets_no_temperature(self) -> None:
+        client, sent = self._client(accepts_temperature=False)
+        provider = self._provider(client)
+
+        assert provider.complete('hello', use='classification') == 'OK'
+        # 0 is the API default, so it is not sent at all.
+        assert 'temperature' not in sent[0]
+        assert sent[0]['extra_body'] is None
+
+    def test_modern_sdk_gets_a_custom_temperature_via_extra_body(self) -> None:
+        client, sent = self._client(accepts_temperature=False)
+        provider = self._provider(client)
+
+        provider.complete('hello', temperature=0.3, use='extraction')
+
+        assert sent[0]['extra_body'] == {'temperature': 0.3}
+
+    def test_older_sdk_still_gets_a_named_temperature(self) -> None:
+        client, sent = self._client(accepts_temperature=True)
+        provider = self._provider(client)
+
+        provider.complete('hello', temperature=0.3, use='extraction')
+
+        assert sent[0]['temperature'] == 0.3
+
+    def test_usage_is_recorded_against_a_modern_sdk(self) -> None:
+        client, _ = self._client(accepts_temperature=False)
+        provider = self._provider(client)
+
+        provider.complete('hello', use='classification')
+
+        record = AiUsageRecord.objects.get(use='classification')
+        assert record.provider == 'anthropic'
+        assert record.input_tokens == 100
+        assert record.output_tokens == 20
+        assert record.total_cost > 0
+
+
+class TestPlaceholderKeysAreNotConfigured:
+    """A key copied from .env.example is `***`, which is truthy.
+
+    Sending it produced a 401 per AI call, so nothing was recorded and nothing
+    said why. It has to read as "not configured" instead.
+    """
+
+    @pytest.mark.parametrize('value', ['', '***', ' *** '])
+    def test_anthropic_refuses_a_placeholder_key(self, value: str) -> None:
+        from django.test import override_settings
+
+        from rfq.ai_providers import AIProviderUnavailable, AnthropicProvider
+
+        with override_settings(ANTHROPIC_API_KEY=value), pytest.raises(
+            AIProviderUnavailable, match='ANTHROPIC_API_KEY is not configured',
+        ):
+            AnthropicProvider()
+
+    @pytest.mark.parametrize('value', ['', '***', ' *** '])
+    def test_openai_refuses_a_placeholder_key(self, value: str) -> None:
+        from django.test import override_settings
+
+        from rfq.ai_providers import AIProviderUnavailable, OpenAIProvider
+
+        with override_settings(OPENAI_API_KEY=value), pytest.raises(
+            AIProviderUnavailable, match='OPENAI_API_KEY is not configured',
+        ):
+            OpenAIProvider()
+
+    def test_a_real_key_is_not_mistaken_for_a_placeholder(self) -> None:
+        from django.test import override_settings
+
+        from rfq.ai_providers import AnthropicProvider
+
+        # Building the client makes no network call, so this is safe to assert:
+        # a real-looking key has to get past the placeholder check.
+        with override_settings(ANTHROPIC_API_KEY='sk-ant-real-looking-key'):
+            provider = AnthropicProvider()
+
+        assert provider.name == 'anthropic'

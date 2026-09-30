@@ -101,12 +101,16 @@ class OpenAiExtractor:
 
     def __init__(self, provider=None) -> None:
         self._provider = provider
+        # Why extraction is off, when it is. Reported to the UI rather than
+        # swallowed, so "no items extracted" is distinguishable from "no AI".
+        self.unavailable_reason = ''
         if self._provider is not None:
             return
         try:
             self._provider = get_ai_provider()
         except AIProviderUnavailable as exc:
             logger.warning('AI provider unavailable; extraction disabled: %s', exc)
+            self.unavailable_reason = str(exc) or 'no reason given'
             self._provider = None
 
     def extract(
@@ -118,7 +122,7 @@ class OpenAiExtractor:
         order_id: Optional[int] = None,
     ) -> Optional[ExtractedRfqData]:
         if self._provider is None:
-            logger.warning('AI provider unavailable')
+            logger.warning('AI provider unavailable: %s', self.unavailable_reason)
             return None
 
         if not text.strip():

@@ -1,4 +1,5 @@
 import logging
+from typing import List
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -20,10 +21,38 @@ from rfq.serializers import (
 )
 from rfq.analytics_service import compute_analytics, dashboard_stats
 from rfq.ai_usage import ai_usage_stats
+from rfq.email_categories import (
+    OTHER as CATEGORY_OTHER,
+    PO as CATEGORY_PO,
+    QUOTATION as CATEGORY_QUOTATION,
+    RFQ as CATEGORY_RFQ,
+)
 from rfq.email_ingestion_service import EmailIngestionService
 from microsoft_auth.graph_api import GraphEmailProvider
 
 logger = logging.getLogger(__name__)
+
+# Which Order type a thread's tag turns into. A PO-tagged thread is a customer
+# purchase order, so it must be stored as one — otherwise it would land on the
+# RFQ page and never show up under Purchase Orders. A quotation is our reply to
+# an RFQ, so it stays on the RFQ record it belongs to.
+CATEGORY_TO_ORDER_TYPE = {
+    CATEGORY_RFQ: 'rfq',
+    CATEGORY_QUOTATION: 'rfq',
+    CATEGORY_PO: 'purchase_order',
+}
+
+
+def filter_by_thread_tag(qs, tag):
+    """Restrict an Order queryset to the orders a `tag`ged thread produced.
+
+    The RFQ page shows what the AI tagged as an RFQ and the Purchase Orders page
+    what it tagged as a PO; anything tagged `other` (bounces, newsletters,
+    anything not actionable) belongs to neither. Orders with no thread at all
+    have no tag to filter on — manually created deals and anything built by the
+    older ingestion path — so they are kept on both pages.
+    """
+    return qs.filter(Q(email_thread__isnull=True) | Q(email_thread__category=tag))
 
 
 def _build_email_provider(user) -> GraphEmailProvider:
@@ -50,6 +79,14 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Order.objects.all()
+
+        # The list is the RFQ page, so it only carries RFQ-tagged threads (see
+        # filter_by_thread_tag) and never a purchase order, which belongs on the
+        # Purchase Orders page instead. `retrieve` is left unfiltered on purpose:
+        # the detail endpoint is what opens one order for editing from any page,
+        # and filtering it would 404 a PO opened from the Purchase Orders list.
+        if self.action == 'list':
+            qs = filter_by_thread_tag(qs.filter(type='rfq'), CATEGORY_RFQ)
 
         type_param = self.request.query_params.get('type')
         if type_param:
@@ -89,8 +126,15 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def purchase_orders(self, request):
-        """Get list of purchase orders (type=purchase_order)."""
-        qs = Order.objects.filter(type='purchase_order')
+        """Get list of purchase orders (type=purchase_order).
+
+        Mirrors the RFQ page: a thread only appears here when the AI tagged it
+        as a PO. An `other` or quotation thread is not a purchase order, so it
+        is left off both pages and stays on the pipeline.
+        """
+        qs = filter_by_thread_tag(
+            Order.objects.filter(type='purchase_order'), CATEGORY_PO
+        )
 
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
@@ -312,8 +356,17 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
         except Exception as exc:
             logger.warning('AI provider unavailable: %s', exc)
             classifier = None
+            classifier_error = f'{type(exc).__name__}: {exc}'
+        else:
+            classifier_error = ''
 
         message_categories = []
+        # Why the AI could not be reached, if it could not be. Without this the
+        # only sign of a broken key or an incompatible SDK was every message
+        # quietly falling back to `other`, which reads exactly like the AI
+        # deciding that — and the dashboard shows no usage because no call ever
+        # completed. Reported back to the UI so the failure is visible.
+        ai_errors: List[str] = []
 
         # Every message is analyzed, old and new alike, so each one carries its
         # own tag regardless of when it was pulled from Outlook.
@@ -333,12 +386,19 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
             if classifier is not None:
                 try:
                     category = classifier.classify(email_data)
-                except ClassificationUnavailable:
+                except ClassificationUnavailable as exc:
+                    ai_errors.append(str(exc))
                     category = DEFAULT_CATEGORY
                 except Exception as exc:
                     logger.warning('Classification failed for message %s: %s', msg.message_id, exc)
+                    ai_errors.append(f'{type(exc).__name__}: {exc}')
                     category = DEFAULT_CATEGORY
             else:
+                ai_errors.append(
+                    classifier.unavailable_reason
+                    or classifier_error
+                    or 'AI provider unavailable - check the API key and AI_PROVIDER'
+                )
                 category = DEFAULT_CATEGORY
 
             category = normalize_category(category)
@@ -368,8 +428,20 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
         # category tag above is what actually conveys the result.
 
         # Find or create the linked Order
+        #
+        # A thread tagged `other` is not a deal, so it never gets an Order: the
+        # RFQ and Purchase Orders pages are built from those orders, and a
+        # bounce notification or newsletter has no business in either of them.
+        # The thread itself stays on the pipeline as a card, where the user can
+        # still read it and drag it along.
         existing_order = Order.objects.filter(email_thread=thread).first()
-        if existing_order:
+        if best_category == CATEGORY_OTHER:
+            logger.info(
+                'Thread %s tagged other; no Order created',
+                thread.conversation_id,
+            )
+            rfq_order = None
+        elif existing_order:
             rfq_order = existing_order
         else:
             latest_msg = messages.last()
@@ -380,11 +452,11 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
             from rfq.rfq_builder import RfqBuilder
             builder = RfqBuilder()
 
-            if best_category == 'rfq':
+            if best_category == CATEGORY_RFQ:
 
                 rfq_msg = None
                 for msg in messages:
-                    if msg.category == 'rfq':
+                    if msg.category == CATEGORY_RFQ:
                         rfq_msg = msg
                         break
                 if not rfq_msg:
@@ -400,7 +472,7 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
                 )
             else:
                 from rfq.utils import generate_rfq_number
-                order_type = best_category if best_category in ('rfq', 'purchase_order') else 'rfq'
+                order_type = CATEGORY_TO_ORDER_TYPE.get(best_category, 'rfq')
                 rfq_order = Order.objects.create(
                     rfq_number=generate_rfq_number(),
                     company_name=company,
@@ -419,19 +491,18 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
                 defaults={'processed': False, 'classification': best_category},
             )
 
-            # Auto-create or link contact
+            # Auto-create or link contact (company from the email domain, phone
+            # from the signature; an existing contact is never overwritten)
             if sender_email:
-                from contacts.models import Contact
-                contact, _ = Contact.objects.get_or_create(
+                from contacts.utils import upsert_contact_from_email
+                contact, _ = upsert_contact_from_email(
                     email=sender_email,
-                    defaults={
-                        'company_name': company,
-                        'contact_person': sender_name,
-                        'type': 'client',
-                    },
+                    sender_name=sender_name,
+                    body=latest_msg.body or latest_msg.body_preview or '',
                 )
-                rfq_order.contact = contact
-                rfq_order.save(update_fields=['contact'])
+                if contact is not None:
+                    rfq_order.contact = contact
+                    rfq_order.save(update_fields=['contact'])
 
             # Extract items from ALL messages + attachments
             from rfq.data_extractors import OpenAiExtractor
@@ -614,10 +685,17 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
                     ai_meta.classification = best_category
                     ai_meta.save(update_fields=['processed', 'classification', 'updated_at'])
                     logger.info('Extracted %d items for RFQ %s', len(extracted.get('items', [])), rfq_order.rfq_number)
+                elif extractor.unavailable_reason:
+                    # extract() answers None for "nothing found" and for "there is
+                    # no AI"; only the second one is a failure worth reporting.
+                    ai_errors.append(
+                        f'Item extraction skipped: {extractor.unavailable_reason}'
+                    )
             except Exception as exc:
                 logger.warning('Item extraction failed for thread %s: %s', pk, exc)
+                ai_errors.append(f'Item extraction failed: {type(exc).__name__}: {exc}')
 
-        # Create contacts from thread senders (skip internal @corimetal.it)
+        # Create contacts from thread senders (internal @corimetal.it excluded)
         #
         # IMPORTANT: this only writes to the LOCAL database. Categorization is an
         # analysis step, so it must never create customers in Business Central —
@@ -626,35 +704,35 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
         # To push a contact to BC it has to be an explicit, user-initiated action
         # via the contacts endpoint: POST /api/contacts/<id>/sync_bc/
         # (ContactViewSet.sync_bc, used by the "Sync to BC" button on the Contacts page).
-        from contacts.models import Contact
+        #
+        # Each sender is matched on their email address ignoring case, so the
+        # same person cannot be added twice; the first message that carries a
+        # signature supplies the phone number and later ones never overwrite it.
+        from contacts.utils import upsert_contact_from_email
         seen_emails = set()
         contacts_created = 0
 
         for msg in messages:
             sender_email = (msg.sender_email or '').strip().lower()
-            sender_name = (msg.sender_name or '').strip()
             if not sender_email or sender_email in seen_emails:
                 continue
             seen_emails.add(sender_email)
-            if sender_email.endswith('@corimetal.it'):
-                continue
 
-            contact_name = sender_name or sender_email.split('@')[0]
-
-            # Create local contact
-            contact, created = Contact.objects.get_or_create(
+            contact, created = upsert_contact_from_email(
                 email=sender_email,
-                defaults={
-                    'company_name': contact_name,
-                    'contact_person': sender_name,
-                },
+                sender_name=(msg.sender_name or '').strip(),
+                body=msg.body or msg.body_preview or '',
             )
             if created:
                 contacts_created += 1
-                logger.info('Created contact: %s <%s>', sender_name, sender_email)
+                logger.info('Created contact: %s <%s>', msg.sender_name, sender_email)
 
         if contacts_created:
             logger.info('Created %d new contacts from thread %s', contacts_created, thread.conversation_id[-16:])
+
+        # A thread with 20 messages repeats the same failure 20 times; the client
+        # only needs to know it happened, not how often.
+        unique_ai_errors = list(dict.fromkeys(ai_errors))[:3]
 
         return Response({
             'id': thread.id,
@@ -670,7 +748,12 @@ class EmailThreadViewSet(viewsets.ModelViewSet):
                 }
                 for msg in messages
             ],
-            'order_id': rfq_order.id,
+            # None for a thread tagged `other`: no Order is created for those, so
+            # there is nothing to send the user to from the RFQ or PO page.
+            'order_id': rfq_order.id if rfq_order else None,
             'contacts_created': contacts_created,
+            # Non-empty means the AI never answered and every tag above is the
+            # `other` fallback, not a decision. The UI says so out loud.
+            'ai_errors': unique_ai_errors,
             # No bc_customers_created: this endpoint no longer writes to BC.
         })

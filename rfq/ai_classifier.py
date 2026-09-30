@@ -28,17 +28,24 @@ class AiEmailClassifier:
 
     def __init__(self, provider=None) -> None:
         self._provider = provider
+        # Kept, not just logged. It is the only thing that says *which* key is
+        # missing, and it is what the pipeline reports back to the UI; a bare
+        # "AI provider unavailable" left a 401 and a missing key looking alike.
+        self.unavailable_reason = ''
         if self._provider is not None:
             return
         try:
             self._provider = get_ai_provider()
         except AIProviderUnavailable as exc:
             logger.error('AI provider unavailable; classification disabled: %s', exc)
+            self.unavailable_reason = str(exc) or 'no reason given'
             self._provider = None
 
     def classify(self, email: EmailMessage) -> EmailClassification:
         if self._provider is None:
-            raise ClassificationUnavailable('AI provider unavailable')
+            raise ClassificationUnavailable(
+                f'AI provider unavailable: {self.unavailable_reason or "unknown reason"}'
+            )
 
         subject = email.get('subject') or ''
         body = email.get('body') or ''
